@@ -140,33 +140,3 @@ end
 
 module Make(Net : NET)(Config : CONFIG)
   : S with module Net = Net and module Config = Config
-
-(** {2 Key/Value storage} *)
-
-module type Store = sig
-  module DHT : S
-
-  type id = DHT.id
-  type key = DHT.id
-  type value = string
-
-  type t
-    (** A key/value distributed store, on top of the given {! DHT} module *)
-
-  val create : ?gc:int -> DHT.t -> t
-    (** Create a key/value store that uses this DHT. The optional [gc]
-        parameter is used to remove key/value pairs that have not been
-        accessed for [gc] seconds. By default, key/value pairs are kept
-        forever. *)
-
-  val get : t -> key -> value option Lwt.t
-    (** Get the value associated to this key, if it can be found *)
-
-  val store : t -> key -> value -> unit
-    (** Store the given [key -> value] in the DHT *)
-
-  val iter : t -> (key -> value -> unit) -> unit
-    (** Key/value pairs stored in the given store *)
-end
-
-module MakeStore(DHT : S) : Store with module DHT = DHT
