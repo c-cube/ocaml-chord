@@ -1,0 +1,2 @@
+<*.ml> or <*.mli>: package(lwt), package(lwt.unix)
+<*.native> or <*.byte> or <*.cm*>: package(lwt), package(lwt.unix)

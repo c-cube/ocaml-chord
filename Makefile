@@ -2,10 +2,10 @@
 INTERFACE_FILES = $(shell find -name '*.mli')
 IMPLEMENTATION_FILES = $(shell find -name '*.ml')
 
-TARGETS_LIB = kademlia.cma kademlia.cmxa
-TARGETS_DOC = kademlia.docdir/index.html
+TARGETS_LIB = libchord.cma libchord.cmxa
+TARGETS_DOC = libchord.docdir/index.html
 
-OPTIONS = -use-ocamlfind -packages lwt,lwt.unix
+OPTIONS = -use-ocamlfind
 
 all: lib
 
