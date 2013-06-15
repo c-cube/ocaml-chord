@@ -58,6 +58,10 @@ module type CONFIG = sig
   val finger_frequency: int
     (** Frequency at which Chord fingers are refreshed *)
 
+  val node_timeout : int
+    (** After this amount of time (in seconds), a node that does not reply
+        is considered dead *)
+
   val timeout : float
     (** Timeout for message replies *)
 end
@@ -125,8 +129,9 @@ module type S = sig
     (** Send the given message to the {! Config.redundancy} successors of
         the given ID *)
 
-  val receive : t -> Bencode.t -> unit
-    (** Have the DHT process this incoming message *)
+  val receive : t -> Net.Address.t -> Bencode.t -> unit
+    (** Have the DHT process this incoming message. The address of the
+        sender is also passed as a parameter. *)
 
   val tick : t -> unit
     (** Tick, should be called regularly (frequently enough, say,
