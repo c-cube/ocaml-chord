@@ -69,9 +69,9 @@ end
 module ConfigDefault : CONFIG = struct
   let redundancy = 5
 
-  let stabilize_frequency = 30
+  let stabilize_frequency = 15
 
-  let finger_frequency = 120
+  let finger_frequency = 10
 
   let node_timeout = 300
 
@@ -184,10 +184,11 @@ module Make(Net : NET)(Config : CONFIG) = struct
     fingers : node option array; (* accelerate lookups *)
     replies : (int, float * (Bencode.t option -> unit)) Hashtbl.t; (* replies *)
     mutable reply_tag : int;  (* fresh tag for queries *)
-    mutable listeners : (string -> unit) list;
+    mutable listeners : (Bencode.t -> unit) list;
     mutable change_listeners : (change_event -> unit) list;
     mutable next_stabilize : float;
     mutable next_fingers : float;
+    mutable finger_to_fix : int; (* index of finger to fix *)
   } (** The local node *)
 
   and node = {
@@ -312,6 +313,9 @@ module Make(Net : NET)(Config : CONFIG) = struct
       ---> notify:  ["notify"; bencoded node]
 
       ---> message: ["msg"; bencoded value]
+
+      ---> hello:   ["hello", tag]
+      <---          ["reply", tag, address of sender, node of receiver]
       *)
 
   (* some (possibly remote) node wants to know the successor of [id], and
@@ -369,7 +373,16 @@ module Make(Net : NET)(Config : CONFIG) = struct
     let module B = Bencode in
     let tag = _get_reply_tag ~dht in
     let msg = B.L [ B.S "predecessor"; B.I tag ] in
-    _send_wait_reply ~dht ~tag addr msg k
+    _send_wait_reply ~dht ~tag addr msg
+      (function
+        | Some (B.L [B.S "reply"; _; node]) ->
+          begin try
+            let node = node_of_bencode node in
+            k (Some node)
+          with Invalid_argument _ ->
+            k None
+          end
+        | _ -> k None)
 
   (* send my predecessor to [addr] *)
   let _reply_predecessor ~dht tag addr =
@@ -426,11 +439,39 @@ module Make(Net : NET)(Config : CONFIG) = struct
       _handle_notify ~dht node
     | B.L [B.S "predecessor"; B.I tag] ->
       _reply_predecessor ~dht tag sender
+    | B.L (B.S "reply" :: B.I tag :: _) ->
+      begin try
+        let timeout, k = Hashtbl.find dht.replies tag in
+        (* call [k] with the reply, if it did not timeout yet *)
+        (if timeout >= Unix.gettimeofday ()
+          then begin
+            k (Some msg);
+            Hashtbl.remove dht.replies tag (* clear hashtable entry *)
+          end)
+      with Not_found -> ()
+      end;
+    | B.L [B.S "msg"; msg] ->
+      (* deliver message *)
+      List.iter (fun f -> f msg) dht.listeners
     | _ -> ()
 
   (* check whether new successors have joined *)
   let _stabilize ~dht =
-    () (* TODO *)
+    let successor = _get_successor ~dht in
+    _ask_predecessor ~dht successor.n_address
+      (fun msg ->
+        begin match msg with
+        | None -> ()
+        | Some node ->
+          if _between node.n_id
+            (BI.succ_big_int dht.local.n_id)
+            (BI.pred_big_int successor.n_id)
+            then
+              (* found a closer successor *)
+              dht.successors <- node :: dht.successors
+        end;
+        (* notify the successor of our presence *)
+        _notify ~dht (_get_successor ~dht).n_address)
 
   (* check whether the predecessor is alive *)
   let _check_predecessor ~dht =
@@ -446,13 +487,51 @@ module Make(Net : NET)(Config : CONFIG) = struct
       (* ping the predecessor *)
       _ping ~dht node.n_address k
 
+  (* update the given finger *)
+  let _fix_finger ~dht n =
+    (* find a new finger *)
+    let find_finger () =
+      let id = _plus_power_two dht.local.n_id n in
+      _find_successor ~dht id
+        (function
+          | None -> ()   (* no finger *)
+          | Some node -> (* new finger found *)
+            dht.fingers.(n) <- Some node)
+    in
+    (* check whether we have a valid finger *)
+    match dht.fingers.(n) with
+    | None -> find_finger ()
+    | Some node ->
+      _ping ~dht node.n_address
+        (function
+          | None ->
+            dht.fingers.(n) <- None;
+            find_finger ()  (* finger died, find another one *)
+          | Some _ -> ()  (* finger ok *)
+          )
+
   (* update the fingers table *)
   let _fix_fingers ~dht =
-    () (* TODO *)
+    dht.finger_to_fix <- dht.finger_to_fix + 1;
+    (if dht.finger_to_fix = n
+      then dht.finger_to_fix <- 1);
+    _fix_finger ~dht dht.finger_to_fix
 
   (* timeouts for request/reply messages *)
   let _check_timeouts ~dht =
-    () (* TODO *)
+    let now = Unix.gettimeofday () in
+    (* find the handlers that have timeout *)
+    let l = ref [] in
+    Hashtbl.iter
+      (fun tag (timeout, k) ->
+        if now > timeout then l := (tag, k) :: !l)
+      dht.replies;
+    (* remove obsolete handlers, after handling them [None] *)
+    List.iter
+      (fun (tag, k) ->
+        Hashtbl.remove dht.replies tag;
+        k None)
+      !l
 
   (* check timeouts *)
   let _tick ~dht =
@@ -497,7 +576,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
       n_payload = payload;
       n_timeout = infinity;
     } in
-    let now = Unix.gettimeofday () in
     let dht = {
       local;
       predecessor=None;
@@ -507,8 +585,9 @@ module Make(Net : NET)(Config : CONFIG) = struct
       fingers = Array.create n None;
       listeners = [];
       change_listeners = [];
-      next_stabilize = now;
-      next_fingers = now +. 10.;
+      next_stabilize = infinity;
+      next_fingers = infinity;
+      finger_to_fix = 0;
     } in
     dht
 
@@ -527,8 +606,33 @@ module Make(Net : NET)(Config : CONFIG) = struct
   let payload node = node.n_payload
 
   let connect dht addr =
-    (* TODO: fix successor, fix fingers soon *)
-    failwith "connect: not implemented"
+    let module B = Bencode in
+    let future, promise = Lwt.wait () in
+    (* send a "hello" message to the given address *)
+    let tag = _get_reply_tag ~dht in
+    let msg = B.L [ B.S "hello"; B.I tag ] in
+    _send_wait_reply ~dht ~tag addr msg
+      (function
+        | Some (B.L [B.S "reply"; _; my_addr; node]) ->
+          begin try
+            (* update my address *)
+            let my_addr = Net.Address.decode my_addr in
+            dht.local.n_address <- my_addr;
+            (* update successor *)
+            let node = node_of_bencode node in
+            dht.successors <- node :: dht.successors;
+            _notify ~dht node.n_address;
+            (* ready updates of the topology very soon *)
+            let now = Unix.gettimeofday () in
+            dht.next_stabilize <- now +. 1.;
+            dht.next_fingers <- now +. 2.;
+            (* return the node's ID *)
+            Lwt.wakeup promise (Some (string_of_id node.n_id))
+          with Invalid_argument _ ->
+            Lwt.wakeup promise None  (* invalid message *)
+          end
+        | _ -> Lwt.wakeup promise None);
+    future
 
   let find_node dht id =
     let id = id_of_string id in
@@ -537,7 +641,14 @@ module Make(Net : NET)(Config : CONFIG) = struct
     future
 
   let send dht id msg =
-    failwith "send: not implemented"
+    let module B = Bencode in
+    let id = id_of_string id in
+    let msg = B.L [B.S "msg"; msg] in
+    _find_successor ~dht id
+      (function
+        | None -> ()
+        | Some node ->
+          _send_no_reply ~dht node.n_address msg)
 
   let receive dht sender msg =
     try (* handle the message *)
@@ -548,9 +659,9 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   let tick dht = _tick ~dht
 
-  let on_message id k =
-    failwith "on_message: not implemented"
+  let on_message dht k =
+    dht.listeners <- k :: dht.listeners
 
   let on_change dht k =
-    failwith "on_change: not implemented"
+    dht.change_listeners <- k :: dht.change_listeners
 end

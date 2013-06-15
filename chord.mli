@@ -51,12 +51,11 @@ module type CONFIG = sig
         of the query ID). Must be >= 1 *)
 
   val stabilize_frequency : int
-    (** Frequency at whAich stabilization of immediate neighbors is performed,
-        in seconds. This should be quite frequent, and more frequent
-        than {! finger_frequency} *)
+    (** Frequency at which stabilization of immediate neighbors is performed,
+        in seconds. This should be quite frequent *)
 
   val finger_frequency: int
-    (** Frequency at which Chord fingers are refreshed *)
+    (** Frequency at which Chord fingers are refreshed, one at a time *)
 
   val node_timeout : int
     (** After this amount of time (in seconds), a node that does not reply
