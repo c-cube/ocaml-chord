@@ -52,14 +52,58 @@ module type NET = sig
 
   type event =
     | Receive of Address.t * Bencode.t   (* received message *)
+    | ConnectionUp (* connection is up again *)
+    | ConnectionDown  (* connection was cut *)
     | Stop  (* stop the DHT *)
 
-  val wait : unit -> event Lwt.t
-    (** Wait for the next event *)
+  val events : unit -> event Signal.t
+    (** Signal transmitting events that occur on the network *)
 
   val sleep : float -> unit Lwt.t
     (** Sleep for the given amount of seconds *)
 end
+
+(** {2 RPC} *)
+
+(** This provides a lightweight RPC mechanism on top of a {!NET}
+    implementation and B-encoded messages. *)
+
+module type RPC = sig
+  module Net : NET
+
+  type address = Net.Address.t
+
+  type t
+    (** A RPC system *)
+
+  type reply_tag
+    (** A tag used to reply to messages *)
+
+  val create : ?frequency:float -> unit -> t
+    (** Create an instance of the RPC system, which can send and receive
+        remote function calls.
+        [frequency] is the frequency, in seconds, at which the
+        RPC system checks whether some replies timed out. *)
+
+  val notify : t -> address -> Bencode.t -> unit
+    (** Send a message without expecting a reply *)
+
+  val send : t -> ?timeout:float -> address -> Bencode.t -> Bencode.t option Lwt.t
+    (** Send a message, expecting a reply *)
+
+  val reply : t -> reply_tag -> Bencode.t -> unit
+    (** Reply to the message whose tag is given *)
+
+  val received : t -> (address * reply_tag option * Bencode.t) Signal.t
+    (** Signal incoming messages. The signal transmits the sender's
+        address, a reply tag (in case the sender expected a reply)
+        and the message itself *)
+
+  val stop : t -> unit
+    (** Disable all threads and active processes *)
+end
+
+module MakeRPC(Net : NET) : RPC with module Net = Net
 
 (** {2 Configuration} *)
 
@@ -89,36 +133,6 @@ end
 module ConfigDefault : CONFIG
   (** Default parameters *)
 
-(** {2 RPC} *)
-
-(** This provides a lightweight RPC mechanism on top of a {!NET}
-    implementation and B-encoded messages. *)
-
-module type RPC = sig
-  module Net : NET
-
-  type address = Net.Address.t
-
-  type t
-    (** A RPC system *)
-
-
-  val create : unit -> t
-    (** Create an instance of the RPC system, which can send and receive
-        remote function calls *)
-
-  val notify : t -> address -> Bencode.t -> unit
-    (** Send a message without expecting a reply *)
-
-  val send : t -> ?timeout:float -> address -> Bencode.t -> Bencode.t option Lwt.t
-    (** Send a message, expecting a reply *)
-
-  val on_receive : t -> (address -> Bencode.t -> unit) -> unit
-    (** Register for incoming messages *)
-end
-
-module MakeRPC(Net : NET) : RPC with module Net = Net
-
 (** {2 DHT} *)
 
 (** The DHT is a Chord network. It uses {!NET} for communications, and
@@ -131,6 +145,7 @@ module MakeRPC(Net : NET) : RPC with module Net = Net
 module type S = sig
   module Net : NET
   module Config : CONFIG
+  module Rpc : RPC with module Net = Net
 
   type id = string
     (** A string that uniquely identifies a node on the DHT *)
@@ -149,7 +164,7 @@ module type S = sig
   val random_id : unit -> id
     (** A fresh, unique ID usable on the network *)
 
-  val create : ?id:id -> ?payload:string -> t
+  val create : ?id:id -> payload:string -> t
     (** New DHT, using the given network node. If no ID is provided,
         a new random one is used.
         [payload] is an optional string that is attached to the newly
@@ -175,23 +190,22 @@ module type S = sig
     (** Returns the successor node of the given ID. It may fail, in
         which case [None] is returned. *)
 
-  val send : t -> id -> Bencode.t -> unit
-    (** Send the given message to the {! Config.redundancy} successors of
-        the given ID *)
+  val notify : t -> id -> Bencode.t -> unit
+    (** Send the given message to the nearest successor of the given ID *)
 
   (** {2 Register to events} *)
 
-  val messages : t -> Bencode.t Lwt_stream.t
+  val messages : t -> Bencode.t Signal.t
     (** Stream of incoming messages *)
 
   type change_event =
     | Join of node
     | Part of node
 
-  val changes : t -> change_event Lwt_stream.t
-    (** Stream of events about changes in the network. Not all join/parts
-        are known to the local node, but it is still an interesting
-        information (especially about immediate redundancy). *)
+  val changes : t -> change_event Signal.t
+    (** Changes in the network. Not all join/parts are known to the local node,
+        but it is still an interesting information (especially about immediate
+        redundancy). *)
 end
 
 module Make(Net : NET)(Config : CONFIG)
