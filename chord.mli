@@ -27,6 +27,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 (** {2 Network} *)
 
+(** The network module is an abstraction over communication with other nodes.
+    It allows to designates other entities via {b addresses} (for instance,
+    process IDs, or IP+port addresses), and to send and receive messages
+    as B-encoded data. A primitive to wait is also provided.
+
+    A typical implementation may use TCP connections to send and receive
+    messages. *)
+
 module type NET = sig
   module Address : sig
     type t
@@ -41,38 +49,82 @@ module type NET = sig
 
   val send : Address.t -> Bencode.t -> unit
     (** Send a string to an address *)
+
+  type event =
+    | Receive of Address.t * Bencode.t   (* received message *)
+    | Stop  (* stop the DHT *)
+
+  val wait : unit -> event Lwt.t
+    (** Wait for the next event *)
+
+  val sleep : float -> unit Lwt.t
+    (** Sleep for the given amount of seconds *)
 end
 
 (** {2 Configuration} *)
+
+(** This module contains values that parametrize the DHT's behavior. *)
 
 module type CONFIG = sig
   val redundancy : int
     (** Number of nodes to return after a lookup (the number of successors
         of the query ID). Must be >= 1 *)
 
-  val stabilize_frequency : int
-    (** Frequency at which stabilization of immediate neighbors is performed,
-        in seconds. This should be quite frequent *)
+  val stabilize_frequency : float
+    (** Frequency at whAich stabilization of immediate neighbors is performed,
+        in seconds. This should be quite frequent, and more frequent
+        than {! finger_frequency} *)
 
-  val finger_frequency: int
-    (** Frequency at which Chord fingers are refreshed, one at a time *)
+  val finger_frequency: float
+    (** Frequency at which Chord fingers are refreshed *)
 
-  val node_timeout : int
+  val node_timeout : float
     (** After this amount of time (in seconds), a node that does not reply
         is considered dead *)
 
   val timeout : float
-    (** Timeout for message replies *)
+    (** Timeout for message replies (in seconds) *)
 end
 
 module ConfigDefault : CONFIG
   (** Default parameters *)
 
-(** {2 DHT state} *)
+(** {2 RPC} *)
 
-(** The DHT is a 120-bits addressing Chord network. This module provides a
-    functor that is message-agnostic, and only works on events.
-    see {{: http://en.wikipedia.org/wiki/Chord_%28peer-to-peer%29 } wikipedia}.
+(** This provides a lightweight RPC mechanism on top of a {!NET}
+    implementation and B-encoded messages. *)
+
+module type RPC = sig
+  module Net : NET
+
+  type address = Net.Address.t
+
+  type t
+    (** A RPC system *)
+
+
+  val create : unit -> t
+    (** Create an instance of the RPC system, which can send and receive
+        remote function calls *)
+
+  val notify : t -> address -> Bencode.t -> unit
+    (** Send a message without expecting a reply *)
+
+  val send : t -> ?timeout:float -> address -> Bencode.t -> Bencode.t option Lwt.t
+    (** Send a message, expecting a reply *)
+
+  val on_receive : t -> (address -> Bencode.t -> unit) -> unit
+    (** Register for incoming messages *)
+end
+
+module MakeRPC(Net : NET) : RPC with module Net = Net
+
+(** {2 DHT} *)
+
+(** The DHT is a Chord network. It uses {!NET} for communications, and
+    {!CONFIG} for its parameters.
+
+    @see {{: http://en.wikipedia.org/wiki/Chord_%28peer-to-peer%29 } wikipedia}.
     for a description of Chord. *)
 
 (** Signature of the DHT *)
@@ -97,10 +149,9 @@ module type S = sig
   val random_id : unit -> id
     (** A fresh, unique ID usable on the network *)
 
-  val create : ?id:id -> ?payload:string -> address -> t
+  val create : ?id:id -> ?payload:string -> t
     (** New DHT, using the given network node. If no ID is provided,
-        a new random one is used. The address of the local node
-        must be provided.
+        a new random one is used.
         [payload] is an optional string that is attached to the newly
         created node. *)
 
@@ -110,15 +161,15 @@ module type S = sig
   val id : node -> id
     (** ID of the given DHT node *)
 
-  val address : node -> address
-    (** Address of the node *)
+  val addresses : node -> address list
+    (** Address(es) the node can be contacted with. *)
 
   val payload : node -> string
     (** Payload of a node *)
 
-  val connect : t -> address -> id option Lwt.t
-    (** Try to connect to the remote note, returns the ID of the
-        node on success. *)
+  val connect : t -> address -> node option Lwt.t
+    (** Try to connect to the remote note, returns the remote node
+        on success. *)
 
   val find_node : t -> id -> node option Lwt.t
     (** Returns the successor node of the given ID. It may fail, in
@@ -128,28 +179,19 @@ module type S = sig
     (** Send the given message to the {! Config.redundancy} successors of
         the given ID *)
 
-  val receive : t -> Net.Address.t -> Bencode.t -> unit
-    (** Have the DHT process this incoming message. The address of the
-        sender is also passed as a parameter. *)
-
-  val tick : t -> unit
-    (** Tick, should be called regularly (frequently enough, say,
-        every second). It is used to check timeouts. *)
-
   (** {2 Register to events} *)
 
-  val on_message : t -> (Bencode.t -> unit) -> unit
-    (** Subscribe to generic messages sent to this node. It is the
-        receiving-side counterpart to {!send}. *)
+  val messages : t -> Bencode.t Lwt_stream.t
+    (** Stream of incoming messages *)
 
   type change_event =
     | Join of node
     | Part of node
 
-  val on_change : t -> (change_event -> unit) -> unit
-    (** Register to {!change_event}s. Not all join/parts are known to the
-        local node, but it is still an interesting information (especially
-        about immediate redundancy). *)
+  val changes : t -> change_event Lwt_stream.t
+    (** Stream of events about changes in the network. Not all join/parts
+        are known to the local node, but it is still an interesting
+        information (especially about immediate redundancy). *)
 end
 
 module Make(Net : NET)(Config : CONFIG)
