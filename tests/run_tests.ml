@@ -4,6 +4,7 @@ open OUnit
 let suite =
   "all_tests" >:::
     [ Test_rpc.suite;
+      Test_dht.suite;
     ]
 
 let _ =

@@ -167,7 +167,7 @@ module type S = sig
   val random_id : unit -> id
     (** A fresh, unique ID usable on the network *)
 
-  val create : ?id:id -> net:Net.t -> payload:string -> t
+  val create : ?id:id -> ?payload:string -> Net.t -> t
     (** New DHT, using the given network node. If no ID is provided,
         a new random one is used.
         [payload] is an optional string that is attached to the newly
