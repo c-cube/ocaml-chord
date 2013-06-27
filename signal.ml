@@ -67,3 +67,6 @@ let on s f =
 
 let once s f =
   on s (fun x -> ignore (f x); false)
+
+let propagate a b =
+  on a (fun x -> send b x; true)

@@ -28,8 +28,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 module type S = sig
   module DHT : Chord.S
 
-  type id = DHT.id
-  type key = DHT.id
+  type id = DHT.ID.t
+  type key = DHT.ID.t
   type value = string
 
   type t

@@ -115,6 +115,9 @@ module MakeRPC(Net : NET) : RPC with module Net = Net
 (** This module contains values that parametrize the DHT's behavior. *)
 
 module type CONFIG = sig
+  val dimension : int
+    (** Logarithm (base 2) of the size of the ID space. Default is 160. *)
+
   val redundancy : int
     (** Number of nodes to return after a lookup (the number of successors
         of the query ID). Must be >= 1 *)
@@ -152,8 +155,17 @@ module type S = sig
   module Config : CONFIG
   module Rpc : RPC with module Net = Net
 
-  type id = string
-    (** A string that uniquely identifies a node on the DHT *)
+  (** Unique identifier for a node *)
+  module ID : sig
+    type t
+
+    val of_string : string -> t
+      (** Parses an ID from a string, or @raise Invalid_argument *)
+
+    val to_string : t -> string
+
+    val eq : t -> t -> bool
+  end
 
   type address = Net.Address.t
 
@@ -166,10 +178,10 @@ module type S = sig
         uniquely identifying the remote node in the DHT) to a network address
         and a node payload (private key, owner metadata, etc.) *)
 
-  val random_id : unit -> id
+  val random_id : unit -> ID.t
     (** A fresh, unique ID usable on the network *)
 
-  val create : ?log:bool -> ?id:id -> ?payload:string -> Net.t -> t
+  val create : ?log:bool -> ?id:ID.t -> ?payload:string -> Net.t -> t
     (** New DHT, using the given network node. If no ID is provided,
         a new random one is used.
         [payload] is an optional string that is attached to the newly
@@ -178,7 +190,7 @@ module type S = sig
   val local : t -> node
     (** Node that represents this very DHT node *)
 
-  val id : node -> id
+  val id : node -> ID.t
     (** ID of the given DHT node *)
 
   val addresses : node -> address list
@@ -191,11 +203,11 @@ module type S = sig
     (** Try to connect to the remote note, returns the remote node
         on success. *)
 
-  val find_node : t -> id -> node option Lwt.t
+  val find_node : t -> ID.t -> node option Lwt.t
     (** Returns the successor node of the given ID. It may fail, in
         which case [None] is returned. *)
 
-  val notify : t -> id -> Bencode.t -> unit
+  val notify : t -> ID.t -> Bencode.t -> unit
     (** Send the given message to the nearest successor of the given ID *)
 
   (** {2 Register to events} *)
@@ -204,18 +216,18 @@ module type S = sig
     (** Stream of incoming messages *)
 
   type change_event =
-    | Join of node
-    | Part of node
+    | NewNode of node
+    | Timeout of node
 
   val changes : t -> change_event Signal.t
     (** Changes in the network. Not all join/parts are known to the local node,
         but it is still an interesting information (especially about immediate
         redundancy). *)
 
-    (** {2 Misc} *)
+  (** {2 Misc} *)
 
-    val enable_log : ?on:out_channel -> t -> unit
-      (** Print events related to the DHT on the given channel *)
+  val enable_log : ?on:out_channel -> t -> unit
+    (** Print events related to the DHT on the given channel *)
 end
 
 module Make(Net : NET)(Config : CONFIG)

@@ -28,8 +28,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 module type S = sig
   module DHT : Chord.S
 
-  type id = DHT.id
-  type key = DHT.id
+  type id = DHT.ID.t
+  type key = DHT.ID.t
   type value = string
 
   type t
@@ -54,8 +54,8 @@ end
 module Make(DHT : Chord.S) = struct
   module DHT = DHT
 
-  type id = DHT.id
-  type key = string
+  type id = DHT.ID.t
+  type key = DHT.ID.t
   type value = string
 
   type t = {
@@ -65,7 +65,7 @@ module Make(DHT : Chord.S) = struct
   }
 
   and pair_cell = {
-    pc_key : string;
+    pc_key : key;
     pc_value : string;
     mutable pc_ttl : float;  (* time to live *)
   } (** A key/value pair *)

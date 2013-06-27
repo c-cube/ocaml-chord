@@ -25,6 +25,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 (** {6 Chord DHT} *)
 
+module B = Bencode
+
 (** {2 Network} *)
 
 (** The network module is an abstraction over communication with other nodes.
@@ -237,6 +239,9 @@ end
 (** This module contains values that parametrize the DHT's behavior. *)
 
 module type CONFIG = sig
+  val dimension : int
+    (** Logarithm (base 2) of the size of the ID space. Default is 160. *)
+
   val redundancy : int
     (** Number of nodes to return after a lookup (the number of successors
         of the query ID). Must be >= 1 *)
@@ -258,6 +263,8 @@ module type CONFIG = sig
 end
 
 module ConfigDefault : CONFIG = struct
+  let dimension = 160
+
   let redundancy = 5
 
   let stabilize_frequency = 15.
@@ -283,8 +290,17 @@ module type S = sig
   module Config : CONFIG
   module Rpc : RPC with module Net = Net
 
-  type id = string
-    (** A string that uniquely identifies a node on the DHT *)
+  (** Unique identifier for a node *)
+  module ID : sig
+    type t
+
+    val of_string : string -> t
+      (** Parses an ID from a string, or @raise Invalid_argument *)
+
+    val to_string : t -> string
+
+    val eq : t -> t -> bool
+  end
 
   type address = Net.Address.t
 
@@ -297,10 +313,10 @@ module type S = sig
         uniquely identifying the remote node in the DHT) to a network address
         and a node payload (private key, owner metadata, etc.) *)
 
-  val random_id : unit -> id
+  val random_id : unit -> ID.t
     (** A fresh, unique ID usable on the network *)
 
-  val create : ?log:bool -> ?id:id -> ?payload:string -> Net.t -> t
+  val create : ?log:bool -> ?id:ID.t -> ?payload:string -> Net.t -> t
     (** New DHT, using the given network node. If no ID is provided,
         a new random one is used.
         [payload] is an optional string that is attached to the newly
@@ -309,7 +325,7 @@ module type S = sig
   val local : t -> node
     (** Node that represents this very DHT node *)
 
-  val id : node -> id
+  val id : node -> ID.t
     (** ID of the given DHT node *)
 
   val addresses : node -> address list
@@ -322,11 +338,11 @@ module type S = sig
     (** Try to connect to the remote note, returns the remote node
         on success. *)
 
-  val find_node : t -> id -> node option Lwt.t
+  val find_node : t -> ID.t -> node option Lwt.t
     (** Returns the successor node of the given ID. It may fail, in
         which case [None] is returned. *)
 
-  val notify : t -> id -> Bencode.t -> unit
+  val notify : t -> ID.t -> Bencode.t -> unit
     (** Send the given message to the nearest successor of the given ID *)
 
   (** {2 Register to events} *)
@@ -335,21 +351,19 @@ module type S = sig
     (** Stream of incoming messages *)
 
   type change_event =
-    | Join of node
-    | Part of node
+    | NewNode of node
+    | Timeout of node
 
   val changes : t -> change_event Signal.t
     (** Changes in the network. Not all join/parts are known to the local node,
         but it is still an interesting information (especially about immediate
         redundancy). *)
 
-    (** {2 Misc} *)
+  (** {2 Misc} *)
 
-    val enable_log : ?on:out_channel -> t -> unit
-      (** Print events related to the DHT on the given channel *)
+  val enable_log : ?on:out_channel -> t -> unit
+    (** Print events related to the DHT on the given channel *)
 end
-
-(* TODO: detect when successor dies, in which case update successors list *)
 
 module Make(Net : NET)(Config : CONFIG) = struct
   module Net = Net
@@ -360,50 +374,259 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   module BI = Big_int
 
-  module B = Bencode
-
   let (>>=) = Lwt.(>>=)
+
+  let n = Config.dimension
+    (** Number of bits in the ID space *)
+
+  (* perform the given action every [freq] seconds *)
+  let rec do_every ?(while_=(fun () -> true)) ~freq act =
+    if while_ ()
+      then
+        Net.sleep freq >>= fun () ->
+        act ();
+        do_every ~while_ ~freq act
+      else Lwt.return_nil
+
+  (** A list of addresses, sorted by decreasing last time we saw
+      this address *)
+  module AddressList = struct
+    type t = address list ref
+
+    let create () = ref []
+
+    let _eq = Net.Address.eq
+
+    (* is the address present? *)
+    let mem l addr =
+      List.exists (fun a' -> _eq addr a') !l
+
+    (* add/refresh the given address *)
+    let touch l addr =
+      if mem l addr
+        then l := addr :: (List.filter (fun x -> not (_eq x addr)) !l)
+        else l := addr :: !l
+
+    (* merge the second list into the first one *)
+    let merge ~into l2 =
+      List.iter (touch into) !l2
+
+    (* pick an address in the list, or @raise Not_found *)
+    let pick l = match !l with
+      | [] -> raise Not_found
+      | a::_ -> a
+
+    (* iter on addresses *)
+    let iter l f =
+      List.iter f !l
+
+    let to_list l = !l
+
+    let encode l =
+      B.L (List.map Net.Address.encode !l)
+
+    let decode = function
+      | B.L l ->
+        begin try
+          let l = List.map Net.Address.decode l in
+          ref l
+        with _ ->
+          raise (Invalid_argument "could not decode address list")
+        end
+      | _ ->
+        raise (Invalid_argument "could not decode address list")
+
+    (* print the list *)
+    let fmt fmt l =
+      Format.fprintf fmt "@[<h>";
+      List.iteri
+        (fun i a ->
+          (if i > 0 then Format.fprintf fmt " ");
+          Bencode.pretty fmt (Net.Address.encode a))
+        !l;
+      Format.fprintf fmt "@]"
+  end
+
+  module ID = struct
+    type t = BI.big_int
+
+    let of_string = BI.big_int_of_string
+
+    let to_string = BI.string_of_big_int
+
+    let eq = BI.eq_big_int
+
+    let compare = BI.compare_big_int
+  end
+
+  (** Manage the ring structure of nodes *)
+  module Ring = struct
+    let () =
+      if n < 2 then failwith "Chord.Ring: dimension <= 2 is too low"
+
+    module IDMap = Map.Make(struct
+      type t = ID.t
+      let compare = ID.compare
+    end)
+
+    type node = {
+      n_id : ID.t;
+      n_addresses : AddressList.t;
+      mutable n_payload : string;
+      mutable n_timeout : float;  (* time at which the node is considered dead *)
+      mutable n_confirmed : bool; (* do we know this node exists? *)
+    } (** A node of the DHT *)
+
+    type t = {
+      local : node;
+      mutable nodes : node IDMap.t;
+      on_timeout : node Signal.t;   (* nodes that timed out *)
+    } (** Ring structure *)
+
+    (* create a new ring *)
+    let create local =
+      let ring = {
+        local = local;
+        nodes = IDMap.empty;
+        on_timeout = Signal.create ();
+      } in
+      ring
+
+    let _bound = BI.power_big_int_positive_int (BI.big_int_of_int 1) n
+
+    let _modulo i = BI.mod_big_int i _bound
+
+    (* [_plus_power_two i j] = [i + 2 ** j] *)
+    let _plus_power_two i j =
+      let two_power_j = BI.power_big_int_positive_int (BI.big_int_of_int 2) j in
+      _modulo (BI.add_big_int i two_power_j)
+
+    (* [between i j k] is true iff [i] is between [j] and [k] on the ring *)
+    let _between i j k =
+      if j <= k
+        then (BI.le_big_int j i && BI.le_big_int i k)
+        else (BI.le_big_int k i || BI.le_big_int i j)
+
+    (* get node by ID *)
+    let get ring id =
+      try IDMap.find id ring.nodes
+      with Not_found ->
+        let node = {
+          n_id = id;
+          n_addresses = AddressList.create ();
+          n_payload = "";
+          n_timeout = Unix.gettimeofday () +. Config.node_timeout;
+          n_confirmed = false;
+        } in
+        ring.nodes <- IDMap.add node.n_id node ring.nodes;
+        node
+
+    (* local node *)
+    let local ring = ring.local
+
+    (* first node with id >= id *)
+    let _find ring id =
+      match IDMap.split id ring.nodes with
+      | _, Some n, _ -> n  (* some node has this exact ID *)
+      | l, None, r -> 
+        try
+          snd (IDMap.min_binding r)
+        with Not_found ->
+          try snd (IDMap.min_binding l)  (* wrap *)
+          with Not_found ->
+            ring.local
+
+    (* current successor *)
+    let successor ring =
+      _find ring (BI.succ_big_int ring.local.n_id)
+
+    (* the known node that immediately precedes [id] *)
+    let _closest_preceding_node ring id =
+      match IDMap.split id ring.nodes with
+      | l, _, r -> 
+        try
+          snd (IDMap.max_binding l)
+        with Not_found ->
+          try snd (IDMap.max_binding r)  (* wrap *)
+          with Not_found ->
+            ring.local (* no other known node *)
+
+    (* current predecessor *)
+    let predecessor ring =
+      _closest_preceding_node ring ring.local.n_id
+
+    (* [k]-th finger *)
+    let finger ring k =
+      let id = _plus_power_two ring.local.n_id k in
+      _find ring id
+
+    (* remove the node explicitely *)
+    let remove ring id =
+      ring.nodes <- IDMap.remove id ring.nodes
+
+    (* number of known nodes in the ring *)
+    let size ring =
+      IDMap.cardinal ring.nodes
+
+    (* we just saw this node (from the given address) *)
+    let touch ring ~from ~node =
+      let now = Unix.gettimeofday () in
+      node.n_timeout <- now +. Config.node_timeout;
+      node.n_confirmed <- true;
+      AddressList.touch node.n_addresses from;
+      ()
+      
+    (* check if the node timeouted *)
+    let check_timeout ring id =
+      let now = Unix.gettimeofday () in
+      try
+        let node = IDMap.find id ring.nodes in
+        (* local node cannot time out *)
+        if node != ring.local && node.n_timeout < now
+          then begin  (* remove this node, trigger signal *)
+            remove ring id;
+            Signal.send ring.on_timeout node;
+          end
+      with Not_found ->
+        ()
+
+    (* nodes that timed out *)
+    let on_timeout ring = ring.on_timeout
+
+    let node_to_bencode node =
+      B.L [B.S (ID.to_string node.n_id);
+           AddressList.encode node.n_addresses;
+           B.S node.n_payload]
+
+    let node_of_bencode ring msg =
+      match msg with
+      | B.L [B.S id; addresses; B.S payload] ->
+        let node = get ring (ID.of_string id) in
+        let addresses = AddressList.decode addresses in
+        AddressList.merge ~into:node.n_addresses addresses;
+        node
+      | _ ->
+        invalid_arg "Chord.node_of_bencode: invalid B-encoded message"
+  end
+
+  type node = Ring.node
 
   module Rpc = MakeRPC(Net)
 
-  let n = 160
-    (** Number of bits in the ID space *)
-
-  type id = string
-    (** A string that uniquely identifies a node on the DHT *)
-
-  type node = {
-    n_id : BI.big_int;
-    mutable n_addresses : address list;
-    mutable n_payload : string;
-    mutable n_timeout : float;  (* time at each the node is considered dead *)
-  } (** A node of the DHT *)
-
-  (* weak table of nodes *)
-  module W = Weak.Make(struct
-    type t = node
-    let equal n1 n2 = n1.n_id = n2.n_id
-    let hash n = Hashtbl.hash n.n_id
-  end)
-
   type t = {
-    local : node;
-    nodes : W.t; (* weak table of nodes *)
+    local : Ring.node;
+    ring : Ring.t;
     rpc : Rpc.t;
     logs : string Signal.t;
-    mutable predecessor : node option;
-    mutable successors : node list;  (* a list of the {! Config.redundancy} successors *)
-    fingers : node option array; (* accelerate lookups *)
     mutable next_stabilize : float;
     mutable next_fingers : float;
     mutable finger_to_fix : int; (* index of finger to fix *)
     messages : Bencode.t Signal.t;
     changes : change_event Signal.t;
   } (** The local node *)
-
   and change_event =
-    | Join of node
-    | Part of node
+    | NewNode of node
+    | Timeout of node
 
   let _addr_to_str addr =
     Bencode.pretty_to_str (Net.Address.encode addr)
@@ -414,7 +637,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
   let _log ~dht format =
     let b = Buffer.create 15 in
     Printf.bprintf b "[dht %5s at %.2f] "
-      (BI.string_of_big_int dht.local.n_id) (Unix.gettimeofday () -. _start_time);
+      (ID.to_string dht.ring.Ring.local.Ring.n_id) (Unix.gettimeofday () -. _start_time);
     Printf.kbprintf
       (fun b ->
         Buffer.add_char b '\n';
@@ -424,116 +647,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   let enable_log ?(on=stderr) dht =
     Signal.on dht.logs (fun msg -> output_string on msg; true)
-
-  (** {2 Implementation} *)
-
-  let _bound = BI.power_big_int_positive_int (BI.big_int_of_int 1) n
-
-  let _modulo i = BI.mod_big_int i _bound
-
-  (* [_plus_power_two i j] = [i + 2 ** j] *)
-  let _plus_power_two i j =
-    let two_power_j = BI.power_big_int_positive_int (BI.big_int_of_int 2) j in
-    _modulo (BI.add_big_int i two_power_j)
-
-  (* [between i j k] is true iff [i] is between [j] and [k] on the ring *)
-  let _between i j k =
-    if j <= k
-      then (j <= i && i <= k)
-      else (k <= i || i <= j)
-
-  (* conversion string -> big int *)
-  let id_of_string = BI.big_int_of_string
-
-  (* conversion big int -> string *)
-  let string_of_id = BI.string_of_big_int
-
-  let node_to_bencode node =
-    B.L [B.S (string_of_id node.n_id);
-         B.L (List.map Net.Address.encode node.n_addresses);
-         B.S node.n_payload]
-
-  (* get the unique node object for this ID *)
-  let _get_node ~dht id =
-    let node = {
-      n_id = id;
-      n_addresses = [];
-      n_payload = "";
-      n_timeout = Unix.gettimeofday () +. Config.node_timeout;
-    } in
-    W.merge dht.nodes node
-
-  (* add address to the list of addresses of this node *)
-  let _add_address_to node addr =
-    if not (List.exists (fun a' -> Net.Address.eq a' addr) node.n_addresses)
-      then node.n_addresses <- addr :: node.n_addresses
-
-  (* increase the time to live of this node, because we just saw it *)
-  let _touch_node node =
-    let now = Unix.gettimeofday () in
-    node.n_timeout <- now +. Config.node_timeout
-
-  (* pick an address among the addresses of the node *)
-  let _pick_addr node =
-    match node.n_addresses with
-    | [] -> raise Not_found
-    | a::_ -> a
-
-  let node_of_bencode ~dht msg =
-    match msg with
-    | B.L [B.S id; B.L addresses; B.S payload] ->
-      let node = _get_node ~dht (id_of_string id) in
-      let addresses = List.map Net.Address.decode addresses in
-      List.iter (_add_address_to node) addresses;
-      node
-    | _ -> invalid_arg "Chord.node_of_bencode: invalid B-encoded message"
-
-  let _notify_join ~dht node =
-    Signal.send dht.changes (Join node)
-
-  let _notify_part ~dht node =
-    Signal.send dht.changes (Part node)
-
-  (* immediate successor *)
-  let _get_successor ~dht =
-    match dht.successors with
-    | [] -> failwith "Chord._get_successor: no successor available"
-    | s::_ -> s
-
-  (* the known node that immediately precedes [id] *)
-  let _closest_preceding_node ~dht id =
-    let lower = BI.succ_big_int dht.local.n_id in
-    let rec lookup i =
-      if i = 0
-        then dht.local  (* no other node than [dht.local] *)
-      else match dht.fingers.(i) with
-        | None -> lookup (i-1)
-        | Some node ->
-          if _between node.n_id lower id
-            then node  (* node is the predecessor *)
-            else lookup (i-1)
-    in
-    lookup (n-1)
-
-  let rec _list_take n = function
-    | _ when n = 0 -> []
-    | [] -> []
-    | x::l' -> x :: _list_take (n-1) l'
-
-  let _check_if_successor ~dht node =
-    match dht.successors with
-    | [] ->
-      dht.successors <- [node];
-      _log ~dht "successor is now %s" (string_of_id node.n_id);
-    | successor::_ ->
-      if _between node.n_id
-        (BI.succ_big_int dht.local.n_id)
-        (BI.pred_big_int successor.n_id)
-        then begin
-          (* found a closer successor *)
-          dht.successors <- _list_take Config.redundancy (node :: dht.successors);
-          _log ~dht "successor is now %s" (string_of_id successor.n_id);
-        end
 
   (** The wire format is B-encoded messages. At the top-level, the B-encode
       structures are composed of a constructor (indicating which method
@@ -567,22 +680,22 @@ module Make(Net : NET)(Config : CONFIG) = struct
   (* some (possibly remote) node wants to know the successor of [id], and
     calls the callback [k] with the answer. *)
   let _find_successor ~dht id k =
-    if id = dht.local.n_id
+    if ID.eq id dht.local.Ring.n_id
       then k (Some dht.local)  (* it's me! *)
-    else if _between id dht.local.n_id (_get_successor dht).n_id
-      then k (Some (_get_successor ~dht))  (* known successor *)
+    else if Ring._between id dht.local.Ring.n_id (Ring.successor dht.ring).Ring.n_id
+      then k (Some (Ring.successor dht.ring))  (* known successor *)
     else
       (* ask the highest preceding node *)
-      let n' = _closest_preceding_node ~dht id in
-      let addr = _pick_addr n' in
-      let msg = B.L [ B.S "find"; B.S (string_of_id id) ] in
+      let n' = Ring._closest_preceding_node dht.ring id in
+      let addr = AddressList.pick n'.Ring.n_addresses in
+      let msg = B.L [ B.S "find"; B.S (ID.to_string id) ] in
       let fut = Rpc.send dht.rpc ~timeout:Config.timeout addr msg in
       Lwt.on_success fut
         (function
         | None -> k None
         | Some node ->
           try
-            let node = node_of_bencode ~dht node in
+            let node = Ring.node_of_bencode dht.ring node in
             k (Some node)
           with Invalid_argument _ ->
             k None)
@@ -591,7 +704,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
       the callback [k] *)
   let _ping ~dht addr k =
     let msg = B.S "ping" in
-    _log ~dht "ping %s" (Bencode.to_string (Net.Address.encode addr));
+    _log ~dht "ping %s" (_addr_to_str addr);
     let fut = Rpc.send dht.rpc ~timeout:Config.node_timeout addr msg in
     Lwt.on_success fut
       (function
@@ -601,6 +714,15 @@ module Make(Net : NET)(Config : CONFIG) = struct
         | _ ->
           k false)
 
+  (* ping the node, to check it's still alive *)
+  let _ping_node ~dht node =
+    AddressList.iter node.Ring.n_addresses
+      (fun addr ->
+        _ping ~dht addr
+          (fun alive ->
+            if alive then Ring.touch dht.ring ~from:addr ~node))
+
+  (* reply to a "ping" message *)
   let _pong ~dht tag =
     let msg = B.S "pong" in
     Rpc.reply dht.rpc tag msg
@@ -613,7 +735,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
       (function
         | Some node ->
           begin try
-            let node = node_of_bencode ~dht node in
+            let node = Ring.node_of_bencode dht.ring node in
             k (Some node)
           with _ -> k None
           end
@@ -621,18 +743,13 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   (* send my predecessor to [addr] *)
   let _reply_predecessor ~dht tag =
-    match dht.predecessor with
-    | None -> ()  (* do not reply :p *)
-    | Some node ->
-      try
-        let msg = node_to_bencode node in
-        Rpc.reply dht.rpc tag msg
-      with Invalid_argument _ ->
-        ()
+    let n = Ring.predecessor dht.ring in
+    let msg = Ring.node_to_bencode n in
+    Rpc.reply dht.rpc tag msg
 
   (* notify the given remote node that we think it's our successor *)
   let _consider ~dht addr =
-    let msg = B.L [B.S "consider"; node_to_bencode dht.local] in
+    let msg = B.L [B.S "consider"; Ring.node_to_bencode dht.local] in
     Rpc.notify dht.rpc addr msg;
     ()
 
@@ -644,27 +761,13 @@ module Make(Net : NET)(Config : CONFIG) = struct
       | None -> ()  (* could not find ID *)
       | Some node ->
         (* found the recipient of the message, now send it the message *)
-        try
-          let msg' = B.L [B.S "msg"; msg] in
-          Rpc.notify dht.rpc (_pick_addr node) msg'
-        with _ -> ())
-
-  (* we received a "consider" message from the given node *)
-  let _handle_consider ~dht node =
-    match dht.predecessor with
-    | None ->
-      dht.predecessor <- Some node  (* update predecessor *)
-    | Some node'
-      when _between node.n_id
-        (BI.succ_big_int node'.n_id) (BI.pred_big_int dht.local.n_id) ->
-      dht.predecessor <- Some node  (* update predecessor *)
-    | _ -> ()
+        let msg' = B.L [B.S "msg"; msg] in
+        Rpc.notify dht.rpc (AddressList.pick node.Ring.n_addresses) msg')
 
   (* reply to a "hello" message *)
   let _handle_hello ~dht sender_addr sender_node tag =
-    let msg = B.L [ Net.Address.encode sender_addr; node_to_bencode dht.local ] in
+    let msg = B.L [ Net.Address.encode sender_addr; Ring.node_to_bencode dht.local ] in
     Rpc.reply dht.rpc tag msg;
-    _check_if_successor ~dht sender_node;
     ()
 
   (* handle incoming messages *)
@@ -674,20 +777,23 @@ module Make(Net : NET)(Config : CONFIG) = struct
     | B.L [B.S "find"; B.S dest_id], Some tag ->
       _log ~dht "%s find_node %s\n" (_addr_to_str sender) dest_id;
       (* ask for the node that is the immediate successor of [dest_id] *)
-      let dest_id = id_of_string dest_id in
+      let dest_id = ID.of_string dest_id in
       _find_successor ~dht dest_id
         (function
         | Some node ->
           (* got a reply, forward it *)
-          let msg' = B.L [B.S "found"; node_to_bencode node] in
+          let msg' = B.L [B.S "found"; Ring.node_to_bencode node] in
           Rpc.reply dht.rpc tag msg'
         | None -> ())
     | B.S "ping", Some tag -> (* must reply to the "ping" *)
       _pong ~dht tag
     | B.L [B.S "consider"; node], None ->
-      let node = node_of_bencode ~dht node in
-      _log ~dht "%s said: consider %s\n" (_addr_to_str sender) (string_of_id node.n_id);
-      _handle_consider ~dht node
+      (* XXX: possible vulnerability, we don't know whether this node does exist *)
+      let node = Ring.node_of_bencode dht.ring node in
+      _log ~dht "%s said: consider %s\n"
+        (_addr_to_str sender) (ID.to_string node.Ring.n_id);
+      (* send a "ping" to this node, see if it's alive *)
+      _ping_node ~dht node
     | B.S "predecessor", Some tag ->
       _log ~dht "%s asked my predecessor\n" (_addr_to_str sender);
       _reply_predecessor ~dht tag
@@ -695,9 +801,10 @@ module Make(Net : NET)(Config : CONFIG) = struct
       _log ~dht "msg %s from %s\n" (Bencode.pretty_to_str msg) (_addr_to_str sender);
       Signal.send dht.messages msg
     | B.L [B.S "hello"; sender_node], Some tag -> (* reply to hello *)
-      let sender_node = node_of_bencode ~dht sender_node in
-      _log ~dht "hello from %s\n" (string_of_id sender_node.n_id);
-      _touch_node sender_node;
+      let sender_node = Ring.node_of_bencode dht.ring sender_node in
+      _log ~dht "hello from %s\n" (ID.to_string sender_node.Ring.n_id);
+      (* touch the node, we know it's alive *)
+      Ring.touch dht.ring ~from:sender ~node:sender_node;
       _handle_hello ~dht sender sender_node tag
     | _ -> ()
     end
@@ -709,71 +816,35 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   (* check whether the predecessor is alive *)
   let _check_predecessor ~dht =
-    match dht.predecessor with
-    | None -> ()
-    | Some node ->
-      let k = function
-        | false ->
-          dht.predecessor <- None;  (* predecessor died *)
-          _notify_part ~dht node
-        | true ->
-          _touch_node node
-      in
-      (* ping the predecessor *)
-      let addr = _pick_addr node in
-      _ping ~dht addr k
-
-  (* remove from the list of successors nodes that timeouted *)
-  let _clean_successors ~dht =
-    let now = Unix.gettimeofday () in
-    let dead, alive = List.partition (fun n -> n.n_timeout < now) dht.successors in
-    dht.successors <- alive;
-    List.iter (fun n -> Signal.send dht.changes (Part n)) dead;
-    ()
+    let node = Ring.predecessor dht.ring in
+    _ping_node ~dht node
 
   (* check whether new successors have joined *)
   let _stabilize ~dht =
-    _clean_successors ~dht;
-    let successor = _get_successor ~dht in
-    _log ~dht "stabilize (current successor %s)" (string_of_id successor.n_id);
+    let n = Ring.successor dht.ring in
+    _log ~dht "stabilize (current successor %s)" (ID.to_string n.Ring.n_id);
     try
-      let addr = _pick_addr successor in
+      let addr = AddressList.pick n.Ring.n_addresses in
       _ask_predecessor ~dht addr
         (fun msg ->
           begin match msg with
           | None -> ()
           | Some node ->
-            _check_if_successor ~dht node
+            _ping_node ~dht node  (* ping predecessor of successor *)
           end;
           (* notify the successor of our presence *)
-          let addr = _pick_addr (_get_successor ~dht) in
+          let addr = AddressList.pick (Ring.successor dht.ring).Ring.n_addresses in
           _consider ~dht addr)
     with _ -> ()
 
   (* update the given finger *)
   let _fix_finger ~dht n =
-    (* find a new finger *)
-    let find_finger () =
-      let id = _plus_power_two dht.local.n_id n in
-      _find_successor ~dht id
-        (function
-          | None -> ()   (* no finger *)
-          | Some node -> (* new finger found *)
-            dht.fingers.(n) <- Some node)
-    in
-    (* check whether we have a valid finger *)
-    match dht.fingers.(n) with
-    | None -> find_finger ()
-    | Some node ->
-      let addr = _pick_addr node in
-      _ping ~dht addr
-        (function
-          | false ->
-            dht.fingers.(n) <- None;
-            find_finger ()  (* finger died, find another one *)
-          | true ->
-            _touch_node node (* finger ok *)
-          )
+    let node = Ring.finger dht.ring n in
+    _find_successor ~dht node.Ring.n_id
+      (function
+        | None -> ()   (* no finger *)
+        | Some node -> (* new finger may be found *)
+          _ping_node ~dht node)
 
   (* update the fingers table *)
   let _fix_fingers ~dht =
@@ -797,34 +868,38 @@ module Make(Net : NET)(Config : CONFIG) = struct
   (* TODO: run a Lwt thread that will wait until next things to do;
      maybe, write a scheduler for this... or use Net.sleep every time we
      schedule a future task *)
+  (* TODO use the ring to manage topology *)
 
   (* create a new DHT node *)
   let create ?(log=false) ?id ?(payload="") net =
     let id = match id with
-      | Some i -> BI.big_int_of_string i
+      | Some i -> i
       | None -> _random_id ()
     in
     (* local node *)
-    let local = {
+    let local =
+      let open Ring in {
       n_id = id;
-      n_addresses = [];
+      n_addresses = AddressList.create ();
       n_payload = payload;
       n_timeout = infinity;
+      n_confirmed = true;
     } in
+    let ring = Ring.create local in
     let dht = {
       local;
+      ring;
       rpc = Rpc.create ~frequency:1. net;
-      nodes = W.create 256;
       logs = Signal.create ();
-      predecessor=None;
-      successors=[];
-      fingers = Array.create n None;
       next_stabilize = infinity;
       next_fingers = infinity;
       finger_to_fix = 0;
       messages = Signal.create ();
       changes = Signal.create ();
     } in
+    Signal.on
+      (Ring.on_timeout dht.ring)
+      (fun n -> Signal.send dht.changes (Timeout n); true);
     (* listen for incoming RPC messages *)
     Signal.on (Rpc.received dht.rpc) (_dispatch_msg ~dht);
     (* log *)
@@ -838,16 +913,17 @@ module Make(Net : NET)(Config : CONFIG) = struct
     dht.local
 
   let random_id () =
-    string_of_id (_random_id ())
+    _random_id ()
 
-  let id node = string_of_id node.n_id
+  let id node = node.Ring.n_id
 
-  let addresses node = node.n_addresses
+  let addresses node =
+    AddressList.to_list node.Ring.n_addresses
 
-  let payload node = node.n_payload
+  let payload node = node.Ring.n_payload
 
   let connect dht addr =
-    let msg = B.L [ B.S "hello"; node_to_bencode dht.local ] in
+    let msg = B.L [ B.S "hello"; Ring.node_to_bencode dht.local ] in
     let fut = Rpc.send dht.rpc ~timeout:(Config.timeout *. 3.) addr msg in
     (* answer future *)
     let future, promise = Lwt.wait () in
@@ -857,10 +933,9 @@ module Make(Net : NET)(Config : CONFIG) = struct
           begin try
             (* update my list of addresses *)
             let my_addr = Net.Address.decode my_addr in
-            _add_address_to dht.local my_addr;
+            AddressList.touch dht.local.Ring.n_addresses my_addr;
             (* update successor with fresh node *)
-            let node = node_of_bencode ~dht node in
-            _check_if_successor ~dht node;
+            let node = Ring.node_of_bencode dht.ring node in
             _consider ~dht addr;
             (* ready updates of the topology very soon *)
             let now = Unix.gettimeofday () in
@@ -875,13 +950,11 @@ module Make(Net : NET)(Config : CONFIG) = struct
     future
 
   let find_node dht id =
-    let id = id_of_string id in
     let future, promise = Lwt.wait () in
     _find_successor ~dht id (Lwt.wakeup promise);
     future
 
   let notify dht id msg =
-    let id = id_of_string id in
     _send_user_message ~dht id msg
 
   let messages dht =
