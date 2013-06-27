@@ -7,10 +7,10 @@ TARGETS_DOC = libchord.docdir/index.html
 
 OPTIONS = -use-ocamlfind
 
-all: lib
+all: lib doc
 
 lib:
-	ocamlbuild $(OPTIONS) $(TARGETS_LIB) $(TARGETS_DOC)
+	ocamlbuild $(OPTIONS) $(TARGETS_LIB)
 
 doc:
 	ocamlbuild $(OPTIONS) $(TARGETS_DOC)
