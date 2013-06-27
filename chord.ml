@@ -45,6 +45,8 @@ module type NET = sig
 
     val decode : Bencode.t -> t
       (** May raise {! Invalid_argument} *)
+
+    val eq : t -> t -> bool
   end
 
   type t
@@ -181,7 +183,7 @@ module MakeRPC(Net : NET) : RPC with module Net = Net = struct
           with Not_found -> ()
           end
         | _ ->
-          Printf.eprintf "ill-formed RPC message: %s\n" (B.to_string msg)
+          Printf.eprintf "ill-formed RPC message: %s\n" (B.pretty_to_str msg)
       end;
       true
 
@@ -298,7 +300,7 @@ module type S = sig
   val random_id : unit -> id
     (** A fresh, unique ID usable on the network *)
 
-  val create : ?id:id -> ?payload:string -> Net.t -> t
+  val create : ?log:bool -> ?id:id -> ?payload:string -> Net.t -> t
     (** New DHT, using the given network node. If no ID is provided,
         a new random one is used.
         [payload] is an optional string that is attached to the newly
@@ -340,7 +342,14 @@ module type S = sig
     (** Changes in the network. Not all join/parts are known to the local node,
         but it is still an interesting information (especially about immediate
         redundancy). *)
+
+    (** {2 Misc} *)
+
+    val enable_log : ?on:out_channel -> t -> unit
+      (** Print events related to the DHT on the given channel *)
 end
+
+(* TODO: detect when successor dies, in which case update successors list *)
 
 module Make(Net : NET)(Config : CONFIG) = struct
   module Net = Net
@@ -381,6 +390,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
     local : node;
     nodes : W.t; (* weak table of nodes *)
     rpc : Rpc.t;
+    logs : string Signal.t;
     mutable predecessor : node option;
     mutable successors : node list;  (* a list of the {! Config.redundancy} successors *)
     fingers : node option array; (* accelerate lookups *)
@@ -394,6 +404,26 @@ module Make(Net : NET)(Config : CONFIG) = struct
   and change_event =
     | Join of node
     | Part of node
+
+  let _addr_to_str addr =
+    Bencode.pretty_to_str (Net.Address.encode addr)
+
+  let _start_time = Unix.gettimeofday ()
+
+  (* print a log message *)
+  let _log ~dht format =
+    let b = Buffer.create 15 in
+    Printf.bprintf b "[dht %5s at %.2f] "
+      (BI.string_of_big_int dht.local.n_id) (Unix.gettimeofday () -. _start_time);
+    Printf.kbprintf
+      (fun b ->
+        Buffer.add_char b '\n';
+        let s = Buffer.contents b in
+        Signal.send dht.logs s)
+      b format
+
+  let enable_log ?(on=stderr) dht =
+    Signal.on dht.logs (fun msg -> output_string on msg; true)
 
   (** {2 Implementation} *)
 
@@ -435,7 +465,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   (* add address to the list of addresses of this node *)
   let _add_address_to node addr =
-    if not (List.mem addr node.n_addresses)
+    if not (List.exists (fun a' -> Net.Address.eq a' addr) node.n_addresses)
       then node.n_addresses <- addr :: node.n_addresses
 
   (* increase the time to live of this node, because we just saw it *)
@@ -465,7 +495,8 @@ module Make(Net : NET)(Config : CONFIG) = struct
     Signal.send dht.changes (Part node)
 
   (* immediate successor *)
-  let _get_successor ~dht = match dht.successors with
+  let _get_successor ~dht =
+    match dht.successors with
     | [] -> failwith "Chord._get_successor: no successor available"
     | s::_ -> s
 
@@ -483,6 +514,26 @@ module Make(Net : NET)(Config : CONFIG) = struct
             else lookup (i-1)
     in
     lookup (n-1)
+
+  let rec _list_take n = function
+    | _ when n = 0 -> []
+    | [] -> []
+    | x::l' -> x :: _list_take (n-1) l'
+
+  let _check_if_successor ~dht node =
+    match dht.successors with
+    | [] ->
+      dht.successors <- [node];
+      _log ~dht "successor is now %s" (string_of_id node.n_id);
+    | successor::_ ->
+      if _between node.n_id
+        (BI.succ_big_int dht.local.n_id)
+        (BI.pred_big_int successor.n_id)
+        then begin
+          (* found a closer successor *)
+          dht.successors <- _list_take Config.redundancy (node :: dht.successors);
+          _log ~dht "successor is now %s" (string_of_id successor.n_id);
+        end
 
   (** The wire format is B-encoded messages. At the top-level, the B-encode
       structures are composed of a constructor (indicating which method
@@ -509,8 +560,8 @@ module Make(Net : NET)(Config : CONFIG) = struct
       introduce oneself to another node; the former replies with
       its information (id, addresses, etc.) and tells the sender
       which address it seems to have
-      ---> hello:   ["hello"]
-      <---          ["hello"; address of sender; node of receiver]
+      ---> hello:   ["hello", node of sender]
+      <---          [address of sender; node of receiver]
       *)
 
   (* some (possibly remote) node wants to know the successor of [id], and
@@ -536,20 +587,16 @@ module Make(Net : NET)(Config : CONFIG) = struct
           with Invalid_argument _ ->
             k None)
 
-  (* notify the given remote node that we think it's our successor *)
-  let _consider ~dht addr =
-    let msg = B.L [B.S "consider"; node_to_bencode dht.local] in
-    Rpc.notify dht.rpc addr msg;
-    ()
-
   (* ping the given address to see if it answers. The answer is given to
       the callback [k] *)
   let _ping ~dht addr k =
     let msg = B.S "ping" in
+    _log ~dht "ping %s" (Bencode.to_string (Net.Address.encode addr));
     let fut = Rpc.send dht.rpc ~timeout:Config.node_timeout addr msg in
     Lwt.on_success fut
       (function
         | Some (B.S "pong") ->
+          _log ~dht "pong from %s" (_addr_to_str addr);
           k true
         | _ ->
           k false)
@@ -577,8 +624,17 @@ module Make(Net : NET)(Config : CONFIG) = struct
     match dht.predecessor with
     | None -> ()  (* do not reply :p *)
     | Some node ->
-      let msg = node_to_bencode node in
-      Rpc.reply dht.rpc tag msg
+      try
+        let msg = node_to_bencode node in
+        Rpc.reply dht.rpc tag msg
+      with Invalid_argument _ ->
+        ()
+
+  (* notify the given remote node that we think it's our successor *)
+  let _consider ~dht addr =
+    let msg = B.L [B.S "consider"; node_to_bencode dht.local] in
+    Rpc.notify dht.rpc addr msg;
+    ()
 
   (* send a user-defined message to the given node *)
   let _send_user_message ~dht id msg =
@@ -604,10 +660,19 @@ module Make(Net : NET)(Config : CONFIG) = struct
       dht.predecessor <- Some node  (* update predecessor *)
     | _ -> ()
 
+  (* reply to a "hello" message *)
+  let _handle_hello ~dht sender_addr sender_node tag =
+    let msg = B.L [ Net.Address.encode sender_addr; node_to_bencode dht.local ] in
+    Rpc.reply dht.rpc tag msg;
+    _check_if_successor ~dht sender_node;
+    ()
+
   (* handle incoming messages *)
   let _dispatch_msg ~dht (sender, tag, msg) =
+    begin try
     begin match msg, tag with
     | B.L [B.S "find"; B.S dest_id], Some tag ->
+      _log ~dht "%s find_node %s\n" (_addr_to_str sender) dest_id;
       (* ask for the node that is the immediate successor of [dest_id] *)
       let dest_id = id_of_string dest_id in
       _find_successor ~dht dest_id
@@ -621,36 +686,26 @@ module Make(Net : NET)(Config : CONFIG) = struct
       _pong ~dht tag
     | B.L [B.S "consider"; node], None ->
       let node = node_of_bencode ~dht node in
+      _log ~dht "%s said: consider %s\n" (_addr_to_str sender) (string_of_id node.n_id);
       _handle_consider ~dht node
     | B.S "predecessor", Some tag ->
+      _log ~dht "%s asked my predecessor\n" (_addr_to_str sender);
       _reply_predecessor ~dht tag
     | B.L [B.S "msg"; msg], _ -> (* deliver message *)
+      _log ~dht "msg %s from %s\n" (Bencode.pretty_to_str msg) (_addr_to_str sender);
       Signal.send dht.messages msg
+    | B.L [B.S "hello"; sender_node], Some tag -> (* reply to hello *)
+      let sender_node = node_of_bencode ~dht sender_node in
+      _log ~dht "hello from %s\n" (string_of_id sender_node.n_id);
+      _touch_node sender_node;
+      _handle_hello ~dht sender sender_node tag
     | _ -> ()
+    end
+    with e ->
+      Printf.printf "exception %s in _dispatch_msg\n" (Printexc.to_string e);
+      Printexc.print_backtrace stdout;
     end;
     true
-
-  (* check whether new successors have joined *)
-  let _stabilize ~dht =
-    let successor = _get_successor ~dht in
-    try
-      let addr = _pick_addr successor in
-      _ask_predecessor ~dht addr
-        (fun msg ->
-          begin match msg with
-          | None -> ()
-          | Some node ->
-            if _between node.n_id
-              (BI.succ_big_int dht.local.n_id)
-              (BI.pred_big_int successor.n_id)
-              then
-                (* found a closer successor *)
-                dht.successors <- node :: dht.successors
-          end;
-          (* notify the successor of our presence *)
-          let addr = _pick_addr (_get_successor ~dht) in
-          _consider ~dht addr)
-    with _ -> ()
 
   (* check whether the predecessor is alive *)
   let _check_predecessor ~dht =
@@ -667,6 +722,33 @@ module Make(Net : NET)(Config : CONFIG) = struct
       (* ping the predecessor *)
       let addr = _pick_addr node in
       _ping ~dht addr k
+
+  (* remove from the list of successors nodes that timeouted *)
+  let _clean_successors ~dht =
+    let now = Unix.gettimeofday () in
+    let dead, alive = List.partition (fun n -> n.n_timeout < now) dht.successors in
+    dht.successors <- alive;
+    List.iter (fun n -> Signal.send dht.changes (Part n)) dead;
+    ()
+
+  (* check whether new successors have joined *)
+  let _stabilize ~dht =
+    _clean_successors ~dht;
+    let successor = _get_successor ~dht in
+    _log ~dht "stabilize (current successor %s)" (string_of_id successor.n_id);
+    try
+      let addr = _pick_addr successor in
+      _ask_predecessor ~dht addr
+        (fun msg ->
+          begin match msg with
+          | None -> ()
+          | Some node ->
+            _check_if_successor ~dht node
+          end;
+          (* notify the successor of our presence *)
+          let addr = _pick_addr (_get_successor ~dht) in
+          _consider ~dht addr)
+    with _ -> ()
 
   (* update the given finger *)
   let _fix_finger ~dht n =
@@ -712,8 +794,12 @@ module Make(Net : NET)(Config : CONFIG) = struct
     done;
     !i
 
+  (* TODO: run a Lwt thread that will wait until next things to do;
+     maybe, write a scheduler for this... or use Net.sleep every time we
+     schedule a future task *)
+
   (* create a new DHT node *)
-  let create ?id ?(payload="") net =
+  let create ?(log=false) ?id ?(payload="") net =
     let id = match id with
       | Some i -> BI.big_int_of_string i
       | None -> _random_id ()
@@ -729,8 +815,9 @@ module Make(Net : NET)(Config : CONFIG) = struct
       local;
       rpc = Rpc.create ~frequency:1. net;
       nodes = W.create 256;
+      logs = Signal.create ();
       predecessor=None;
-      successors=[local];
+      successors=[];
       fingers = Array.create n None;
       next_stabilize = infinity;
       next_fingers = infinity;
@@ -739,9 +826,10 @@ module Make(Net : NET)(Config : CONFIG) = struct
       changes = Signal.create ();
     } in
     (* listen for incoming RPC messages *)
-    Signal.on
-      (Rpc.received dht.rpc)
-      (_dispatch_msg ~dht);
+    Signal.on (Rpc.received dht.rpc) (_dispatch_msg ~dht);
+    (* log *)
+    (if log then enable_log dht);
+    _log ~dht "created";
     dht
 
   (* Get the ID of the DHT. Returns a copy, to be sure that
@@ -759,20 +847,20 @@ module Make(Net : NET)(Config : CONFIG) = struct
   let payload node = node.n_payload
 
   let connect dht addr =
-    let msg = B.S "hello" in
+    let msg = B.L [ B.S "hello"; node_to_bencode dht.local ] in
     let fut = Rpc.send dht.rpc ~timeout:(Config.timeout *. 3.) addr msg in
     (* answer future *)
     let future, promise = Lwt.wait () in
     Lwt.on_success fut
       (function
-        | Some (B.L [ B.S "hello"; my_addr; node ]) ->
+        | Some (B.L [ my_addr; node ]) ->
           begin try
             (* update my list of addresses *)
             let my_addr = Net.Address.decode my_addr in
             _add_address_to dht.local my_addr;
             (* update successor with fresh node *)
             let node = node_of_bencode ~dht node in
-            dht.successors <- node :: dht.successors;
+            _check_if_successor ~dht node;
             _consider ~dht addr;
             (* ready updates of the topology very soon *)
             let now = Unix.gettimeofday () in

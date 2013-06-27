@@ -45,6 +45,8 @@ module type NET = sig
 
     val decode : Bencode.t -> t
       (** May raise {! Invalid_argument} *)
+
+    val eq : t -> t -> bool
   end
 
   type t
@@ -167,7 +169,7 @@ module type S = sig
   val random_id : unit -> id
     (** A fresh, unique ID usable on the network *)
 
-  val create : ?id:id -> ?payload:string -> Net.t -> t
+  val create : ?log:bool -> ?id:id -> ?payload:string -> Net.t -> t
     (** New DHT, using the given network node. If no ID is provided,
         a new random one is used.
         [payload] is an optional string that is attached to the newly
@@ -209,6 +211,11 @@ module type S = sig
     (** Changes in the network. Not all join/parts are known to the local node,
         but it is still an interesting information (especially about immediate
         redundancy). *)
+
+    (** {2 Misc} *)
+
+    val enable_log : ?on:out_channel -> t -> unit
+      (** Print events related to the DHT on the given channel *)
 end
 
 module Make(Net : NET)(Config : CONFIG)

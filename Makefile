@@ -5,7 +5,7 @@ IMPLEMENTATION_FILES = $(shell find -name '*.ml')
 TARGETS_LIB = libchord.cma libchord.cmxa
 TARGETS_DOC = libchord.docdir/index.html
 
-OPTIONS = -use-ocamlfind
+OPTIONS = -use-ocamlfind -tag debug
 
 all: lib doc
 

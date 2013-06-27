@@ -36,6 +36,8 @@ module Address = struct
   let decode = function
     | B.I i -> i
     | _ -> raise (Invalid_argument "bad address")
+
+  let eq a b = a = b
 end
 
 type event =
@@ -57,13 +59,13 @@ let enable_log ?(on=stderr) t =
   Signal.on t.sent
     (fun (to_, msg) ->
       Printf.fprintf on "[net %d]: send %s to %i\n"
-        t.address (B.to_string msg) to_;
+        t.address (B.pretty_to_str msg) to_;
       true);
   Signal.on t.events
     (function
       | Receive (from_, msg) ->
         Printf.fprintf on "[net %d]: receive %s from %i\n"
-          t.address (B.to_string msg) from_;
+          t.address (B.pretty_to_str msg) from_;
         true
       | Stop ->
         Printf.fprintf on "[net %d]: stop\n" t.address;
