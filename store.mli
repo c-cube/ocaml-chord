@@ -29,7 +29,7 @@ module type S = sig
   module DHT : Chord.S
 
   type id = DHT.ID.t
-  type key = DHT.ID.t
+  type key = id
   type value = string
 
   type t
@@ -49,6 +49,10 @@ module type S = sig
 
   val iter : t -> (key -> value -> unit) -> unit
     (** Key/value pairs stored in the given store *)
+
+  val on_timeout : t -> (key * value) Signal.t
+
+  val on_store : t -> (key * value) Signal.t
 end
 
 module Make(DHT : Chord.S) : S with module DHT = DHT

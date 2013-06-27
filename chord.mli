@@ -165,6 +165,8 @@ module type S = sig
     val to_string : t -> string
 
     val eq : t -> t -> bool
+
+    val hash : t -> int
   end
 
   type address = Net.Address.t
@@ -189,6 +191,9 @@ module type S = sig
 
   val local : t -> node
     (** Node that represents this very DHT node *)
+
+  val rpc : t -> Rpc.t
+    (** RPC instance *)
 
   val id : node -> ID.t
     (** ID of the given DHT node *)

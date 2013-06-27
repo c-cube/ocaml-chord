@@ -300,6 +300,8 @@ module type S = sig
     val to_string : t -> string
 
     val eq : t -> t -> bool
+
+    val hash : t -> int
   end
 
   type address = Net.Address.t
@@ -324,6 +326,9 @@ module type S = sig
 
   val local : t -> node
     (** Node that represents this very DHT node *)
+
+  val rpc : t -> Rpc.t
+    (** RPC instance *)
 
   val id : node -> ID.t
     (** ID of the given DHT node *)
@@ -457,6 +462,8 @@ module Make(Net : NET)(Config : CONFIG) = struct
     let eq = BI.eq_big_int
 
     let compare = BI.compare_big_int
+
+    let hash i = Hashtbl.hash (BI.string_of_big_int i)
   end
 
   (** Manage the ring structure of nodes *)
@@ -911,6 +918,8 @@ module Make(Net : NET)(Config : CONFIG) = struct
     it's not modified *)
   let local dht =
     dht.local
+
+  let rpc dht = dht.rpc
 
   let random_id () =
     _random_id ()
