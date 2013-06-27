@@ -155,6 +155,25 @@ module Make(DHT : Chord.S) = struct
     end;
     true
 
+  let rec _check_gc ~store =
+    let now = Unix.gettimeofday () in
+    (* find bindings that have expired *)
+    let l = ref [] in
+    IHashtbl.iter
+      (fun key cell ->
+        if cell.pc_ttl < now
+          then l := cell :: !l)
+      store.table;
+    List.iter
+      (fun cell ->
+        IHashtbl.remove store.table cell.pc_key;
+        Signal.send store.on_timeout (cell.pc_key, cell.pc_value))
+      !l;
+    (* schedule next GC pass *)
+    DHT.Net.call_in
+      (store.gc /. 2.)
+      (fun () -> _check_gc ~store)
+
   let create ?gc dht =
     let gc = match gc with
       | None -> infinity
@@ -167,8 +186,10 @@ module Make(DHT : Chord.S) = struct
       on_timeout = Signal.create ();
       on_store = Signal.create ();
     } in
-    (* TODO: check for garbage collected bindings *)
+    (* listen for incoming RPC messages *)
     Signal.on (Rpc.received (DHT.rpc dht)) (_handle_message ~store);
+    (* check GC *)
+    _check_gc ~store;
     store
 
   let get store key =

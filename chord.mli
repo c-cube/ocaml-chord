@@ -64,8 +64,8 @@ module type NET = sig
   val events : t -> event Signal.t
     (** Signal transmitting events that occur on the network *)
 
-  val sleep : float -> unit Lwt.t
-    (** Sleep for the given amount of seconds *)
+  val call_in : float -> (unit -> unit) -> unit
+    (** Call the function in the given amount of seconds *)
 end
 
 (** {2 RPC} *)

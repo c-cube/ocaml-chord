@@ -66,8 +66,8 @@ module type NET = sig
   val events : t -> event Signal.t
     (** Signal transmitting events that occur on the network *)
 
-  val sleep : float -> unit Lwt.t
-    (** Sleep for the given amount of seconds *)
+  val call_in : float -> (unit -> unit) -> unit
+    (** Call the function in the given amount of seconds *)
 end
 
 (** {2 RPC} *)
@@ -151,15 +151,13 @@ module MakeRPC(Net : NET) : RPC with module Net = Net = struct
 
   (* wait some time, then check timeouts and loop *)
   let rec poll rpc =
-    let (>>=) = Lwt.(>>=) in
     if rpc.stop
-      then Lwt.return_none
-      else begin
-        Net.sleep rpc.frequency
-        >>= fun () ->
-        check_timeouts rpc;
-        poll rpc
-      end
+      then ()
+      else
+        Net.call_in rpc.frequency
+          (fun () ->
+            check_timeouts rpc;
+            poll rpc)
 
   let stop rpc =
     rpc.stop <- true
@@ -199,7 +197,7 @@ module MakeRPC(Net : NET) : RPC with module Net = Net = struct
       received = Signal.create ();
       callbacks = Hashtbl.create 15;
     } in
-    Lwt.ignore_result (poll rpc);
+    poll rpc;
     Signal.on
       (Net.events rpc.net)
       (fun e -> handle_event rpc e);
@@ -389,15 +387,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   let n = Config.dimension
     (** Number of bits in the ID space *)
-
-  (* perform the given action every [freq] seconds *)
-  let rec do_every ?(while_=(fun () -> true)) ~freq act =
-    if while_ ()
-      then
-        Net.sleep freq >>= fun () ->
-        act ();
-        do_every ~while_ ~freq act
-      else Lwt.return_nil
 
   (** A list of addresses, sorted by decreasing last time we saw
       this address *)
@@ -891,7 +880,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
     !i
 
   (* TODO: run a Lwt thread that will wait until next things to do;
-     maybe, write a scheduler for this... or use Net.sleep every time we
+     maybe, write a scheduler for this... or use Net.call_in every time we
      schedule a future task *)
   (* TODO use the ring to manage topology *)
 

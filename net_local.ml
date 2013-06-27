@@ -96,7 +96,9 @@ let send t addr msg =
 
 let events t = t.events
 
-let sleep f = Lwt_unix.sleep f
+let call_in time f =
+  let fut = Lwt_unix.sleep time in
+  Lwt.on_success fut f
 
 let address_of t = t.address
 
