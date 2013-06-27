@@ -28,7 +28,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 include Chord.NET with type Address.t = int
   (** Adresses are just a handle to some in-memory object *)
 
-val create : unit -> t
+val create : ?log:bool -> unit -> t
   (** Create a new network node *)
 
 val address_of : t -> Address.t
@@ -39,3 +39,12 @@ val get : int -> t
 
 val stop : t -> unit
   (** Stop this node *)
+
+val send_node : t -> t -> Bencode.t -> unit
+  (** [send_node n1 n2 msg] sends the message from [n1] to [n2] *)
+
+val sent : t -> (Address.t * Bencode.t) Signal.t
+  (** Sent messages *)
+
+val enable_log : ?on:out_channel -> t -> unit
+  (** Enable logging of events on this network node *)

@@ -46,19 +46,41 @@ type event =
 
 type t = {
   events : event Signal.t;
+  sent : (Address.t * Bencode.t) Signal.t;
   address : int;
 }
 
 let __table = Hashtbl.create 15
 let __count = ref 0
 
-let create () =
+let enable_log ?(on=stderr) t =
+  Signal.on t.sent
+    (fun (to_, msg) ->
+      Printf.fprintf on "[net %d]: send %s to %i\n"
+        t.address (B.to_string msg) to_;
+      true);
+  Signal.on t.events
+    (function
+      | Receive (from_, msg) ->
+        Printf.fprintf on "[net %d]: receive %s from %i\n"
+          t.address (B.to_string msg) from_;
+        true
+      | Stop ->
+        Printf.fprintf on "[net %d]: stop\n" t.address;
+        false
+      | _ -> true);
+
+  ()
+
+let create ?(log=false) () =
   let t = {
     events = Signal.create ();
+    sent = Signal.create ();
     address = !__count;
   } in
   incr __count;
   Hashtbl.add __table t.address t;  (* to access the node by its ID *)
+  (if log then enable_log t);
   t
 
 let get i =
@@ -66,7 +88,9 @@ let get i =
 
 let send t addr msg =
   let t' = get addr in  (* target *)
-  Signal.send t'.events (Receive (t.address, msg))
+  Signal.send t.sent (addr,msg);
+  Signal.send t'.events (Receive (t.address, msg));
+  ()
 
 let events t = t.events
 
@@ -79,3 +103,8 @@ let stop t =
   Signal.send t.events Stop;
   Hashtbl.remove __table t.address;
   () 
+
+let send_node n1 n2 msg =
+  send n1 (address_of n2) msg
+
+let sent t = t.sent

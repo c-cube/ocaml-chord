@@ -3,5 +3,6 @@
 #require "lwt";;
 #load "libchord.cma";;
 print_endline "lib loaded";;
+module B = Bencode;;
 (* vim:syntax=ocaml
 *)
