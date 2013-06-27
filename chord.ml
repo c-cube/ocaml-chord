@@ -347,6 +347,12 @@ module type S = sig
     (** Returns the successor node of the given ID. It may fail, in
         which case [None] is returned. *)
 
+  val successor : t -> node
+    (** Current successor of this node *)
+
+  val successors : t -> int -> node list
+    (** Find the [k] successors of this node *)
+
   val notify : t -> ID.t -> Bencode.t -> unit
     (** Send the given message to the nearest successor of the given ID *)
 
@@ -546,6 +552,18 @@ module Make(Net : NET)(Config : CONFIG) = struct
     (* current successor *)
     let successor ring =
       _find ring (BI.succ_big_int ring.local.n_id)
+
+    (* n successors *)
+    let n_successors ring k =
+      let rec find ring id k =
+      if k = 0
+        then []
+        else
+          let n = _find ring id in
+          n :: find ring (BI.succ_big_int n.n_id) (k-1)
+      in
+      find ring (BI.succ_big_int ring.local.n_id) k
+      
 
     (* the known node that immediately precedes [id] *)
     let _closest_preceding_node ring id =
@@ -962,6 +980,12 @@ module Make(Net : NET)(Config : CONFIG) = struct
     let future, promise = Lwt.wait () in
     _find_successor ~dht id (Lwt.wakeup promise);
     future
+
+  let successor dht =
+    Ring.successor dht.ring
+
+  let successors dht k =
+    Ring.n_successors dht.ring k
 
   let notify dht id msg =
     _send_user_message ~dht id msg

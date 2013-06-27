@@ -212,6 +212,12 @@ module type S = sig
     (** Returns the successor node of the given ID. It may fail, in
         which case [None] is returned. *)
 
+  val successor : t -> node
+    (** Current successor of this node *)
+
+  val successors : t -> int -> node list
+    (** Find the [k] successors of this node *)
+
   val notify : t -> ID.t -> Bencode.t -> unit
     (** Send the given message to the nearest successor of the given ID *)
 
