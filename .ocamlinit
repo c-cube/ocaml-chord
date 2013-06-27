@@ -1,3 +1,7 @@
 #directory "_build";;
+#require "num";;
+#require "lwt";;
 #load "libchord.cma";;
 print_endline "lib loaded";;
+(* vim:syntax=ocaml
+*)
