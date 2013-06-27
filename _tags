@@ -1,2 +1,4 @@
-<*.ml> or <*.mli>: package(lwt), package(lwt.unix)
-<*.native> or <*.byte> or <*.cm*>: package(lwt), package(lwt.unix)
+<tests>: include, package(oUnit)
+<**/*.ml> or <**/*.mli>: package(lwt), package(lwt.unix)
+<**/*.native> or <**/*.byte> or <**/*.cm*>: package(lwt), package(lwt.unix)
+<tests/*.native> or <tests/*.byte>: package(lwt.unix), package(lwt), package(num)

@@ -141,7 +141,7 @@ module ConfigDefault : CONFIG
 (** The DHT is a Chord network. It uses {!NET} for communications, and
     {!CONFIG} for its parameters.
 
-    @see {{: http://en.wikipedia.org/wiki/Chord_%28peer-to-peer%29 } wikipedia}.
+    see {{: http://en.wikipedia.org/wiki/Chord_%28peer-to-peer%29 } wikipedia}.
     for a description of Chord. *)
 
 (** Signature of the DHT *)

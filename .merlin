@@ -1,4 +1,7 @@
 S .
+S tests/
 B _build
+B _build/tests/
 PKG lwt
 PKG lwt.unix
+PKG oUnit

@@ -180,7 +180,8 @@ module MakeRPC(Net : NET) : RPC with module Net = Net = struct
             Lwt.wakeup promise (Some msg');
           with Not_found -> ()
           end
-        | _ -> ()
+        | _ ->
+          Printf.eprintf "ill-formed RPC message: %s\n" (B.to_string msg)
       end;
       true
 
