@@ -46,7 +46,7 @@ module type S = sig
   val get : t -> key -> value option Lwt.t
     (** Get the value associated to this key, if it can be found *)
 
-  val store : t -> key -> value -> unit
+  val store : t -> key -> value -> bool Lwt.t
     (** Store the given [key -> value] in the DHT *)
 
   val iter : t -> (key -> value -> unit) -> unit
@@ -98,14 +98,20 @@ module Make(DHT : Chord.S) = struct
     let now = Unix.gettimeofday () in
     pair_cell.pc_ttl > now
 
+  let _touch_cell ~store cell =
+    cell.pc_ttl <- Unix.gettimeofday () +. store.gc
+
   (* handle a "get" message *)
   let _handle_get ~store tag key =
     try
       let cell = IHashtbl.find store.table key in
       if is_valid cell
-        then
+        then begin
           let msg = B.S cell.pc_value in
+          (* value still used *)
+          _touch_cell ~store cell;
           Rpc.reply (DHT.rpc store.dht) tag msg
+        end
     with Not_found ->
       ()
 
@@ -125,6 +131,17 @@ module Make(DHT : Chord.S) = struct
         (* TODO: notify a few successors to replicate the key/value *)
         Signal.send store.on_store (key,value);
       end
+
+  (* protocol:
+  
+     get the value for this key
+     -->  [ "store.get"; key ]
+     <--  [ value ]
+
+     returns 0 on failure, 1 on success
+     -->  [ "store.store"; key; value]
+     <--  [ 0 | 1 ]
+  *)
 
   let _handle_message ~store (sender, tag, msg) =
     begin match msg, tag with
@@ -155,11 +172,33 @@ module Make(DHT : Chord.S) = struct
     store
 
   let get store key =
-    
-    failwith "Chord.Store.get: not implemented"
+    let fut = DHT.find_node store.dht key in
+    Lwt.bind fut
+      (function
+        | None -> Lwt.return_none
+        | Some node ->
+          let addr = List.hd (DHT.addresses node) in
+          let msg = B.L [ B.S "store.get"; B.S (DHT.ID.to_string key)] in
+          let fut' = Rpc.send ~timeout:5. (DHT.rpc store.dht) addr msg in
+          Lwt.bind fut'
+            (function
+              | Some (B.S value) -> Lwt.return (Some value)
+              | _ -> Lwt.return_none))
 
   let store store key value =
-    failwith "Chord.Store.set: not implemented"
+    let fut = DHT.find_node store.dht key in
+    Lwt.bind fut
+      (function
+        | None -> Lwt.return_false
+        | Some node ->
+          let addr = List.hd (DHT.addresses node) in
+          let msg = B.L [ B.S "store.set"; B.S (DHT.ID.to_string key); B.S value] in
+          let fut' = Rpc.send ~timeout:5. (DHT.rpc store.dht) addr msg in
+          Lwt.bind fut'
+            (function
+              | Some (B.I 0) -> Lwt.return_false
+              | Some (B.I 1) -> Lwt.return_true
+              | _ -> Lwt.return_false))
 
   (* iterate on pairs that are still alive *)
   let iter store k =

@@ -44,7 +44,7 @@ module type S = sig
   val get : t -> key -> value option Lwt.t
     (** Get the value associated to this key, if it can be found *)
 
-  val store : t -> key -> value -> unit
+  val store : t -> key -> value -> bool Lwt.t
     (** Store the given [key -> value] in the DHT *)
 
   val iter : t -> (key -> value -> unit) -> unit
