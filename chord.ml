@@ -47,7 +47,10 @@ module type NET = sig
       (** May raise {! Invalid_argument} *)
   end
 
-  val send : Address.t -> Bencode.t -> unit
+  type t
+    (** A node on the network *)
+
+  val send : t -> Address.t -> Bencode.t -> unit
     (** Send a string to an address *)
 
   type event =
@@ -56,7 +59,7 @@ module type NET = sig
     | ConnectionDown  (* connection was cut *)
     | Stop  (* stop the DHT *)
 
-  val events : unit -> event Signal.t
+  val events : t -> event Signal.t
     (** Signal transmitting events that occur on the network *)
 
   val sleep : float -> unit Lwt.t
@@ -79,9 +82,9 @@ module type RPC = sig
   type reply_tag
     (** A tag used to reply to messages *)
 
-  val create : ?frequency:float -> unit -> t
+  val create : ?frequency:float -> Net.t -> t
     (** Create an instance of the RPC system, which can send and receive
-        remote function calls.
+        remote function calls using the [Net.t] instance.
         [frequency] is the frequency, in seconds, at which the
         RPC system checks whether some replies timed out. *)
 
@@ -114,6 +117,7 @@ module MakeRPC(Net : NET) : RPC with module Net = Net = struct
   } (* stores information necessary to reply to a message *)
 
   type t = {
+    net : Net.t;
     frequency : float;
     mutable count : int;
     mutable stop : bool;
@@ -181,8 +185,9 @@ module MakeRPC(Net : NET) : RPC with module Net = Net = struct
       true
 
   (* create a new RPC system *)
-  let create ?(frequency=2.0) () =
+  let create ?(frequency=2.0) net =
     let rpc = {
+      net;
       frequency;
       count = 1;
       stop = false;
@@ -191,14 +196,14 @@ module MakeRPC(Net : NET) : RPC with module Net = Net = struct
     } in
     Lwt.ignore_result (poll rpc);
     Signal.on
-      (Net.events ())
+      (Net.events rpc.net)
       (fun e -> handle_event rpc e);
     rpc
 
   let notify rpc addr msg =
     (if rpc.stop then failwith "RPC system stopped");
     let msg = B.L [ B.S "ntfy"; msg ] in
-    Net.send addr msg
+    Net.send rpc.net addr msg
 
   let send rpc ?timeout addr msg =
     (if rpc.stop then failwith "RPC system stopped");
@@ -213,12 +218,12 @@ module MakeRPC(Net : NET) : RPC with module Net = Net = struct
     Hashtbl.add rpc.callbacks n (ttl, promise);
     (* send message wrapped in metadata *)
     let msg' = B.L [ B.S "msg"; B.I n; msg ] in
-    Net.send addr msg';
+    Net.send rpc.net addr msg';
     future
 
   let reply rpc tag msg =
     let msg' = B.L [ B.S "reply"; B.I tag.rt_count; msg ] in
-    Net.send tag.rt_address msg'
+    Net.send rpc.net tag.rt_address msg'
 
   let received rpc =
     rpc.received
@@ -292,7 +297,7 @@ module type S = sig
   val random_id : unit -> id
     (** A fresh, unique ID usable on the network *)
 
-  val create : ?id:id -> payload:string -> t
+  val create : ?id:id -> net:Net.t -> payload:string -> t
     (** New DHT, using the given network node. If no ID is provided,
         a new random one is used.
         [payload] is an optional string that is attached to the newly
@@ -707,7 +712,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
     !i
 
   (* create a new DHT node *)
-  let create ?id ~payload =
+  let create ?id ~net ~payload =
     let id = match id with
       | Some i -> BI.big_int_of_string i
       | None -> _random_id ()
@@ -721,7 +726,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
     } in
     let dht = {
       local;
-      rpc = Rpc.create ~frequency:1. ();
+      rpc = Rpc.create ~frequency:1. net;
       nodes = W.create 256;
       predecessor=None;
       successors=[local];

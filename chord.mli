@@ -47,7 +47,10 @@ module type NET = sig
       (** May raise {! Invalid_argument} *)
   end
 
-  val send : Address.t -> Bencode.t -> unit
+  type t
+    (** A node on the network *)
+
+  val send : t -> Address.t -> Bencode.t -> unit
     (** Send a string to an address *)
 
   type event =
@@ -56,7 +59,7 @@ module type NET = sig
     | ConnectionDown  (* connection was cut *)
     | Stop  (* stop the DHT *)
 
-  val events : unit -> event Signal.t
+  val events : t -> event Signal.t
     (** Signal transmitting events that occur on the network *)
 
   val sleep : float -> unit Lwt.t
@@ -79,9 +82,9 @@ module type RPC = sig
   type reply_tag
     (** A tag used to reply to messages *)
 
-  val create : ?frequency:float -> unit -> t
+  val create : ?frequency:float -> Net.t -> t
     (** Create an instance of the RPC system, which can send and receive
-        remote function calls.
+        remote function calls using the [Net.t] instance.
         [frequency] is the frequency, in seconds, at which the
         RPC system checks whether some replies timed out. *)
 
@@ -164,7 +167,7 @@ module type S = sig
   val random_id : unit -> id
     (** A fresh, unique ID usable on the network *)
 
-  val create : ?id:id -> payload:string -> t
+  val create : ?id:id -> net:Net.t -> payload:string -> t
     (** New DHT, using the given network node. If no ID is provided,
         a new random one is used.
         [payload] is an optional string that is attached to the newly
