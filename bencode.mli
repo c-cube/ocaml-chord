@@ -52,6 +52,9 @@ val fmt : Format.formatter -> t -> unit
 val pretty : Format.formatter -> t -> unit
   (** Print the tree itself, not its encoding *)
 
+val pretty_to_str : t -> string
+  (** Print the tree into a string *)
+
 (** {2 Deserialization (decoding)} *)
 
 (** Deserialization is based on the {! decoder} type. Parsing can be
@@ -78,6 +81,11 @@ val parse : decoder -> string -> int -> int -> parse_result
       the substring of [s] starting at index [i] with length [len].
       It can return an error, a value or just [ParsePartial] if
       more input is needed *)
+
+val reset : decoder -> unit
+  (** Reset the decoder to its pristine state, ready to parse something
+      different. Before that, {! rest} and {! rest_size} can be used
+      to recover the part of the input that has not been consumed yet. *)
 
 val state : decoder -> parse_result
   (** Current state of the decoder *)

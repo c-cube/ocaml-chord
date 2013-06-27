@@ -88,7 +88,7 @@ let rec pretty fmt t = match t with
   | S s -> Format.fprintf fmt "@[<h>\"%s\"@]" s
   | L l ->
     Format.fprintf fmt "@[<hov 2>[@,";
-    List.iter (fun t' -> Format.fprintf fmt "%a@ " pretty t') l;
+    List.iteri (fun i t' -> (if i > 0 then Format.pp_print_char fmt ' '); pretty fmt t') l;
     Format.fprintf fmt "]@]";
   | D d ->
     Format.fprintf fmt "@[<hov 2>{@,";
@@ -96,6 +96,12 @@ let rec pretty fmt t = match t with
       (fun k t' -> Format.fprintf fmt "%a -> %a@ " pretty (S k) pretty t')
       d;
     Format.fprintf fmt "}@]";
+    ()
+
+let pretty_to_str t =
+  let b = Buffer.create 15 in
+  Format.fprintf (Format.formatter_of_buffer b) "%a@?" pretty t;
+  Buffer.contents b
 
 (** {2 Deserialization (decoding)} *)
 
@@ -263,6 +269,15 @@ let parse dec s i len =
     end;
   (* state machine *)
   parse_rec dec
+
+let reset dec =
+  dec.l <- 0;
+  dec.c <- 0;
+  dec.i <- 0;
+  dec.len <- 0;
+  dec.state <- ParsePartial;
+  dec.stack <- [];
+  ()
 
 let state dec = dec.state
 
