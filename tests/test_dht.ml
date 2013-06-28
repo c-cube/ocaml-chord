@@ -7,6 +7,8 @@ module Dht = Chord.Make(Net_local)(Chord.ConfigDefault)
 let log_net = false
 let log_dht = true
 
+let (>>=) = Lwt.(>>=)
+
 let test_dht () =
   let n1 = Net_local.create ~log:log_net () in
   let n2 = Net_local.create ~log:log_net () in
@@ -18,6 +20,7 @@ let test_dht () =
   let dht3 = Dht.create ~log:log_dht ~payload:"dht3" n3 in
   let dht4 = Dht.create ~log:log_dht ~payload:"dht4" n4 in
   let dht5 = Dht.create ~log:log_dht ~payload:"dht5" n5 in
+  let all_dht = [dht1; dht2; dht3; dht4; dht5] in
   let fut12 = Dht.connect dht1 (Net_local.address_of n2) in
   let fut13 = Dht.connect dht1 (Net_local.address_of n3) in
   let fut23 = Dht.connect dht2 (Net_local.address_of n3) in
@@ -33,6 +36,10 @@ let test_dht () =
     let n = List.length (List.filter (fun x -> x = None) l) in
     OUnit.assert_failure (Printf.sprintf "should all connect (%d failed)" n);
   end;
+  Lwt_main.run
+    (Lwt.join
+      [ Lwt_list.iter_p Dht.wait all_dht;
+        (Lwt_unix.sleep 2. >>= fun () -> List.iter Dht.stop all_dht; Lwt.return_unit)]);
   ()
 
 let suite =

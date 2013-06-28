@@ -239,6 +239,15 @@ module type S = sig
 
   val enable_log : ?on:out_channel -> t -> unit
     (** Print events related to the DHT on the given channel *)
+
+  val wait : t -> unit Lwt.t
+    (** Wait for the DHT to stop *)
+
+  val stop : t -> unit
+    (** Stop the DHT *)
+
+  val stopped : t -> bool
+    (** Is the DHT already stopped? *)
 end
 
 module Make(Net : NET)(Config : CONFIG)

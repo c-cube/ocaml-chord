@@ -372,6 +372,15 @@ module type S = sig
 
   val enable_log : ?on:out_channel -> t -> unit
     (** Print events related to the DHT on the given channel *)
+
+  val wait : t -> unit Lwt.t
+    (** Wait for the DHT to stop *)
+
+  val stop : t -> unit
+    (** Stop the DHT *)
+
+  val stopped : t -> bool
+    (** Is the DHT already stopped? *)
 end
 
 module Make(Net : NET)(Config : CONFIG) = struct
@@ -637,6 +646,8 @@ module Make(Net : NET)(Config : CONFIG) = struct
     mutable finger_to_fix : int; (* index of finger to fix *)
     messages : Bencode.t Signal.t;
     changes : change_event Signal.t;
+    do_stop : unit Lwt.u;
+    on_stop : unit Lwt.t;
   } (** The local node *)
   and change_event =
     | NewNode of node
@@ -900,6 +911,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
       n_confirmed = true;
     } in
     let ring = Ring.create local in
+    let on_stop, do_stop = Lwt.wait () in
     let dht = {
       local;
       ring;
@@ -910,6 +922,8 @@ module Make(Net : NET)(Config : CONFIG) = struct
       finger_to_fix = 0;
       messages = Signal.create ();
       changes = Signal.create ();
+      do_stop;
+      on_stop;
     } in
     Signal.on
       (Ring.on_timeout dht.ring)
@@ -921,8 +935,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
     _log ~dht "created";
     dht
 
-  (* Get the ID of the DHT. Returns a copy, to be sure that
-    it's not modified *)
   let local dht =
     dht.local
 
@@ -984,4 +996,18 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   let changes dht =
     dht.changes
+
+  let stopped dht =
+    match Lwt.state dht.on_stop with
+    | Lwt.Sleep -> false
+    | _ -> true
+
+  let stop dht =
+    if not (stopped dht)
+      then begin
+        _log ~dht "stop";
+        Lwt.wakeup dht.do_stop ();
+      end
+
+  let wait dht = dht.on_stop
 end
