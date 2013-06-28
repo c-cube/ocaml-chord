@@ -347,13 +347,7 @@ module type S = sig
   val successors : t -> int -> node list
     (** Find the [k] successors of this node *)
 
-  val notify : t -> ID.t -> Bencode.t -> unit
-    (** Send the given message to the nearest successor of the given ID *)
-
   (** {2 Register to events} *)
-
-  val messages : t -> Bencode.t Signal.t
-    (** Stream of incoming messages *)
 
   type change_event =
     | NewNode of node
@@ -363,6 +357,14 @@ module type S = sig
     (** Changes in the network. Not all join/parts are known to the local node,
         but it is still an interesting information (especially about immediate
         redundancy). *)
+
+  (** {2 Overlay network} *)
+
+  module OverlayNet : NET with type Address.t = ID.t and type t = t
+    (** See the DHT as a networking device *)
+
+  module AsRPC : RPC with module Net = OverlayNet
+    (** Remote procedure calls on the overlay network *)
 
   (** {2 Misc} *)
 
@@ -653,7 +655,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
     rpc : Rpc.t;
     logs : string Signal.t;
     mutable finger_to_fix : int; (* index of finger to fix *)
-    messages : Bencode.t Signal.t;
+    messages : (ID.t * Bencode.t) Signal.t;
     changes : change_event Signal.t;
     do_stop : unit Lwt.u;
     on_stop : unit Lwt.t;
@@ -708,7 +710,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
       ---> consider:  ["consider"; node]
 
       user-level message
-      ---> message: ["msg"; bencoded value]
+      ---> message: ["msg"; sender ID; bencoded message]
 
       introduce oneself to another node; the former replies with
       its information (id, addresses, etc.) and tells the sender
@@ -836,9 +838,10 @@ module Make(Net : NET)(Config : CONFIG) = struct
         then _ping_node ~dht node
     | B.S "predecessor", Some tag ->
       _reply_predecessor ~dht tag
-    | B.L [B.S "msg"; msg], _ -> (* deliver message *)
-      _log ~dht "msg %s from %s" (Bencode.pretty_to_str msg) (_addr_to_str sender);
-      Signal.send dht.messages msg
+    | B.L [B.S "msg"; B.S sender_id; msg], _ -> (* deliver message *)
+      _log ~dht "msg %s from %s" (Bencode.pretty_to_str msg) sender_id;
+      let sender_id = ID.of_string sender_id in
+      Signal.send dht.messages (sender_id, msg)
     | B.L [B.S "hello"; sender_node], Some tag -> (* reply to hello *)
       let sender_node = Ring.node_of_bencode dht.ring sender_node in
       _log ~dht "hello from %s" (ID.to_string sender_node.Ring.n_id);
@@ -1008,12 +1011,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
   let successors dht k =
     Ring.n_successors dht.ring k
 
-  let notify dht id msg =
-    _send_user_message ~dht id msg
-
-  let messages dht =
-    dht.messages
-
   let changes dht =
     dht.changes
 
@@ -1027,4 +1024,38 @@ module Make(Net : NET)(Config : CONFIG) = struct
   let wait dht = dht.on_stop
 
   let log dht format = _log ~dht format
+
+  type dht = t
+  module OverlayNet = struct
+    module Address = struct
+      type t = ID.t
+
+      let encode a = B.S (ID.to_string a)
+
+      let decode = function
+        | B.S i -> ID.of_string i
+        | _ -> raise (Invalid_argument "not an ID")
+
+      let eq = ID.eq
+    end
+
+    type t = dht
+
+    let send dht id msg = _send_user_message ~dht id msg
+
+    type event =
+      | Receive of Address.t * Bencode.t   (* received message *)
+      | Stop  (* stop the DHT *)
+
+    let events dht =
+      let s = Signal.create () in
+      Signal.on dht.messages
+        (fun (sender,m) -> Signal.send s (Receive(sender, m)); true);
+      Lwt.on_success dht.on_stop (fun () -> Signal.send s Stop);
+      s
+
+    let call_in = Net.call_in
+  end
+
+  module AsRPC = MakeRPC(OverlayNet)
 end

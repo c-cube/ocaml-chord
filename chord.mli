@@ -216,13 +216,7 @@ module type S = sig
   val successors : t -> int -> node list
     (** Find the [k] successors of this node *)
 
-  val notify : t -> ID.t -> Bencode.t -> unit
-    (** Send the given message to the nearest successor of the given ID *)
-
   (** {2 Register to events} *)
-
-  val messages : t -> Bencode.t Signal.t
-    (** Stream of incoming messages *)
 
   type change_event =
     | NewNode of node
@@ -232,6 +226,14 @@ module type S = sig
     (** Changes in the network. Not all join/parts are known to the local node,
         but it is still an interesting information (especially about immediate
         redundancy). *)
+
+  (** {2 Overlay network} *)
+
+  module OverlayNet : NET with type Address.t = ID.t and type t = t
+    (** See the DHT as a networking device *)
+
+  module AsRPC : RPC with module Net = OverlayNet
+    (** Remote procedure calls on the overlay network *)
 
   (** {2 Misc} *)
 
