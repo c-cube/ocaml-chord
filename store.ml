@@ -103,8 +103,10 @@ module Make(DHT : Chord.S) = struct
 
   (* handle a "get" message *)
   let _handle_get ~store tag key =
+    DHT.log store.dht "handle get %s" (DHT.ID.to_string key);
     try
       let cell = IHashtbl.find store.table key in
+      DHT.log store.dht "found key";
       if is_valid cell
         then begin
           let msg = B.S cell.pc_value in
@@ -113,6 +115,7 @@ module Make(DHT : Chord.S) = struct
           Rpc.reply (DHT.rpc store.dht) tag msg
         end
     with Not_found ->
+      DHT.log store.dht "no such key";
       ()
 
   (* handle a "store" message *)
@@ -140,7 +143,7 @@ module Make(DHT : Chord.S) = struct
      <--  [ value ]
 
      returns 0 on failure, 1 on success
-     -->  [ "store.store"; key; value]
+     -->  [ "store.set"; key; value]
      <--  [ 0 | 1 ]
   *)
 
@@ -149,7 +152,7 @@ module Make(DHT : Chord.S) = struct
     | B.L [ B.S "store.get"; B.S key ], Some tag ->
       let key = DHT.ID.of_string key in
       _handle_get ~store tag key
-    | B.L [ B.S "store.store"; B.S key; B.S value ], Some tag ->
+    | B.L [ B.S "store.set"; B.S key; B.S value ], Some tag ->
       let key = DHT.ID.of_string key in
       _handle_store ~store tag key value
     | _ -> ()

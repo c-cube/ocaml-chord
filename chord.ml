@@ -517,7 +517,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
     (* [between i j k] is true iff [i] is between [j] and [k] on the ring *)
     let _between i j k =
-      if j <= k
+      if BI.le_big_int j k
         then (BI.le_big_int j i && BI.le_big_int i k)
         else (BI.le_big_int k i || BI.le_big_int i j)
 
@@ -809,14 +809,13 @@ module Make(Net : NET)(Config : CONFIG) = struct
     begin try
     begin match msg, tag with
     | B.L [B.S "find"; B.S dest_id], Some tag ->
-      _log ~dht "%s find_node %s\n" (_addr_to_str sender) dest_id;
       (* ask for the node that is the immediate successor of [dest_id] *)
       let dest_id = ID.of_string dest_id in
       _find_successor ~dht dest_id
         (function
         | Some node ->
           (* got a reply, forward it *)
-          let msg' = B.L [B.S "found"; Ring.node_to_bencode node] in
+          let msg' = Ring.node_to_bencode node in
           Rpc.reply dht.rpc tag msg'
         | None -> ())
     | B.S "ping", Some tag -> (* must reply to the "ping" *)
@@ -829,7 +828,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
       (* send a "ping" to this node, see if it's alive *)
       _ping_node ~dht node
     | B.S "predecessor", Some tag ->
-      _log ~dht "%s asked my predecessor" (_addr_to_str sender);
       _reply_predecessor ~dht tag
     | B.L [B.S "msg"; msg], _ -> (* deliver message *)
       _log ~dht "msg %s from %s" (Bencode.pretty_to_str msg) (_addr_to_str sender);
@@ -885,7 +883,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
   let _fix_fingers ~dht =
     dht.finger_to_fix <- dht.finger_to_fix + 1;
     (if dht.finger_to_fix = n
-      then dht.finger_to_fix <- 1);
+      then dht.finger_to_fix <- 0);
     _fix_finger ~dht dht.finger_to_fix
 
   (** {2 Public interface} *)
