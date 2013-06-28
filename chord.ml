@@ -804,19 +804,19 @@ module Make(Net : NET)(Config : CONFIG) = struct
     | B.L [B.S "consider"; node], None ->
       (* XXX: possible vulnerability, we don't know whether this node does exist *)
       let node = Ring.node_of_bencode dht.ring node in
-      _log ~dht "%s said: consider %s\n"
+      _log ~dht "%s said: consider %s"
         (_addr_to_str sender) (ID.to_string node.Ring.n_id);
       (* send a "ping" to this node, see if it's alive *)
       _ping_node ~dht node
     | B.S "predecessor", Some tag ->
-      _log ~dht "%s asked my predecessor\n" (_addr_to_str sender);
+      _log ~dht "%s asked my predecessor" (_addr_to_str sender);
       _reply_predecessor ~dht tag
     | B.L [B.S "msg"; msg], _ -> (* deliver message *)
-      _log ~dht "msg %s from %s\n" (Bencode.pretty_to_str msg) (_addr_to_str sender);
+      _log ~dht "msg %s from %s" (Bencode.pretty_to_str msg) (_addr_to_str sender);
       Signal.send dht.messages msg
     | B.L [B.S "hello"; sender_node], Some tag -> (* reply to hello *)
       let sender_node = Ring.node_of_bencode dht.ring sender_node in
-      _log ~dht "hello from %s\n" (ID.to_string sender_node.Ring.n_id);
+      _log ~dht "hello from %s" (ID.to_string sender_node.Ring.n_id);
       (* touch the node, we know it's alive *)
       Ring.touch dht.ring ~from:sender ~node:sender_node;
       _handle_hello ~dht sender sender_node tag
