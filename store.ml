@@ -122,6 +122,7 @@ module Make(DHT : Chord.S) = struct
         let msg = B.I 0 in
         Rpc.reply (DHT.rpc store.dht) tag msg
       else begin
+        DHT.log store.dht "store: put %s -> %s" (DHT.ID.to_string key) value;
         (* store key/value *)
         let cell = mk_cell ~store key value in
         IHashtbl.add store.table key cell;
@@ -153,7 +154,7 @@ module Make(DHT : Chord.S) = struct
       _handle_store ~store tag key value
     | _ -> ()
     end;
-    true
+    not (DHT.stopped store.dht)
 
   let rec _check_gc ~store =
     let now = Unix.gettimeofday () in
@@ -169,6 +170,7 @@ module Make(DHT : Chord.S) = struct
         IHashtbl.remove store.table cell.pc_key;
         Signal.send store.on_timeout (cell.pc_key, cell.pc_value))
       !l;
+    DHT.log store.dht "store: GC done (%d collected)" (List.length !l);
     (* schedule next GC pass *)
     DHT.Net.call_in
       (store.gc /. 2.)

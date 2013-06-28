@@ -381,6 +381,9 @@ module type S = sig
 
   val stopped : t -> bool
     (** Is the DHT already stopped? *)
+
+  val log : t -> ('a, Buffer.t, unit, unit) format4 -> 'a
+    (** Log a message *)
 end
 
 module Make(Net : NET)(Config : CONFIG) = struct
@@ -1009,4 +1012,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
       end
 
   let wait dht = dht.on_stop
+
+  let log dht format = _log ~dht format
 end
