@@ -653,6 +653,12 @@ module Make(Net : NET)(Config : CONFIG) = struct
     | NewNode of node
     | Timeout of node
 
+  (* is the DHT stopped? *)
+  let stopped dht =
+    match Lwt.state dht.on_stop with
+    | Lwt.Sleep -> false
+    | _ -> true
+
   let _addr_to_str addr =
     Bencode.pretty_to_str (Net.Address.encode addr)
 
@@ -837,7 +843,8 @@ module Make(Net : NET)(Config : CONFIG) = struct
       Printf.printf "exception %s in _dispatch_msg\n" (Printexc.to_string e);
       Printexc.print_backtrace stdout;
     end;
-    true
+    (* continue listening to messages iff the DHT is alive *)
+    not (stopped dht)
 
   (* check whether the predecessor is alive *)
   let _check_predecessor ~dht =
@@ -953,10 +960,8 @@ module Make(Net : NET)(Config : CONFIG) = struct
   let connect dht addr =
     let msg = B.L [ B.S "hello"; Ring.node_to_bencode dht.local ] in
     let fut = Rpc.send dht.rpc ~timeout:(Config.timeout *. 3.) addr msg in
-    (* answer future *)
-    let future, promise = Lwt.wait () in
-    Lwt.on_success fut
-      (function
+    fut >>= 
+      function
         | Some (B.L [ my_addr; node ]) ->
           begin try
             (* update my list of addresses *)
@@ -970,12 +975,11 @@ module Make(Net : NET)(Config : CONFIG) = struct
             dht.next_stabilize <- now +. 1.;
             dht.next_fingers <- now +. 2.;
             (* return the node's ID *)
-            Lwt.wakeup promise (Some node)
-          with _ -> Lwt.wakeup promise None
+            Lwt.return (Some node)
+          with _ -> Lwt.return_none
           end
         | _ ->
-          Lwt.wakeup promise None);
-    future
+          Lwt.return_none
 
   let find_node dht id =
     let future, promise = Lwt.wait () in
@@ -996,11 +1000,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   let changes dht =
     dht.changes
-
-  let stopped dht =
-    match Lwt.state dht.on_stop with
-    | Lwt.Sleep -> false
-    | _ -> true
 
   let stop dht =
     if not (stopped dht)
