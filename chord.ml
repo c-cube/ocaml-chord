@@ -265,7 +265,7 @@ module ConfigDefault : CONFIG = struct
 
   let redundancy = 5
 
-  let stabilize_frequency = 15.
+  let stabilize_frequency = 5.
 
   let finger_frequency = 10.
 
@@ -506,9 +506,13 @@ module Make(Net : NET)(Config : CONFIG) = struct
       } in
       ring
 
-    let _bound = BI.power_big_int_positive_int (BI.big_int_of_int 1) n
+    let _bound = BI.power_big_int_positive_int (BI.big_int_of_int 2) n
 
     let _modulo i = BI.mod_big_int i _bound
+
+    let _succ i = _modulo (BI.succ_big_int i)
+
+    let _pred i = _modulo (BI.pred_big_int i)
 
     (* [_plus_power_two i j] = [i + 2 ** j] *)
     let _plus_power_two i j =
@@ -520,6 +524,14 @@ module Make(Net : NET)(Config : CONFIG) = struct
       if BI.le_big_int j k
         then (BI.le_big_int j i && BI.le_big_int i k)
         else (BI.le_big_int k i || BI.le_big_int i j)
+
+    (* [n] is within [[left ... right]] *)
+    let between n left right =
+      _between n.n_id left.n_id right.n_id
+
+    (* [n] is within [\]left ... right\[] *)
+    let between_strict n left right =
+      _between n.n_id (_succ left.n_id) (_pred right.n_id)
 
     (* get node by ID *)
     let get ring id =
@@ -644,8 +656,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
     ring : Ring.t;
     rpc : Rpc.t;
     logs : string Signal.t;
-    mutable next_stabilize : float;
-    mutable next_fingers : float;
     mutable finger_to_fix : int; (* index of finger to fix *)
     messages : Bencode.t Signal.t;
     changes : change_event Signal.t;
@@ -853,22 +863,30 @@ module Make(Net : NET)(Config : CONFIG) = struct
     _ping_node ~dht node
 
   (* check whether new successors have joined *)
-  let _stabilize ~dht =
+  let rec _stabilize ~dht =
     let n = Ring.successor dht.ring in
     _log ~dht "stabilize (current successor %s)" (ID.to_string n.Ring.n_id);
-    try
+    begin try
       let addr = AddressList.pick n.Ring.n_addresses in
       _ask_predecessor ~dht addr
         (fun msg ->
           begin match msg with
           | None -> ()
           | Some node ->
-            _ping_node ~dht node  (* ping predecessor of successor *)
+            (* ping predecessor of successor *)
+            _ping_node ~dht node;
+            (* new successor is better? stabilize again! *)
+            if Ring.between_strict node dht.local n
+              then Net.call_in 0.1 (fun () -> _stabilize ~dht)
           end;
           (* notify the successor of our presence *)
           let addr = AddressList.pick (Ring.successor dht.ring).Ring.n_addresses in
           _consider ~dht addr)
     with _ -> ()
+    end;
+    (* schedule next stabilize *)
+    if not (stopped dht)
+      then Net.call_in Config.stabilize_frequency (fun () -> _stabilize ~dht)
 
   (* update the given finger *)
   let _fix_finger ~dht n =
@@ -880,11 +898,14 @@ module Make(Net : NET)(Config : CONFIG) = struct
           _ping_node ~dht node)
 
   (* update the fingers table *)
-  let _fix_fingers ~dht =
+  let rec _fix_fingers ~dht =
     dht.finger_to_fix <- dht.finger_to_fix + 1;
     (if dht.finger_to_fix = n
-      then dht.finger_to_fix <- 0);
-    _fix_finger ~dht dht.finger_to_fix
+      then dht.finger_to_fix <- 1);
+    _fix_finger ~dht dht.finger_to_fix;
+    (* schedule next update *)
+    if not (stopped dht)
+      then Net.call_in Config.stabilize_frequency (fun () -> _fix_fingers ~dht)
 
   (** {2 Public interface} *)
 
@@ -925,8 +946,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
       ring;
       rpc = Rpc.create ~frequency:1. net;
       logs = Signal.create ();
-      next_stabilize = infinity;
-      next_fingers = infinity;
       finger_to_fix = 0;
       messages = Signal.create ();
       changes = Signal.create ();
@@ -972,9 +991,8 @@ module Make(Net : NET)(Config : CONFIG) = struct
             let node = Ring.node_of_bencode dht.ring node in
             _consider ~dht addr;
             (* ready updates of the topology very soon *)
-            let now = Unix.gettimeofday () in
-            dht.next_stabilize <- now +. 1.;
-            dht.next_fingers <- now +. 2.;
+            Net.call_in 0.2 (fun () -> _stabilize ~dht);
+            Net.call_in 0.5 (fun () -> _fix_fingers ~dht);
             (* return the node's ID *)
             Lwt.return (Some node)
           with _ -> Lwt.return_none

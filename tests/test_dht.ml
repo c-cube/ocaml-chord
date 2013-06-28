@@ -46,16 +46,13 @@ let test_dht () =
     match all_stores with | s1 :: s2 :: _ -> s1, s2 | _ -> assert false
   in
   let key = Dht.ID.of_string "1" in
-  Printf.eprintf "store\n";
   let store_ok = Store.store store1 key "foo" in
-  Printf.eprintf "get\n";
   let get_ok =
    (Lwt_unix.sleep 0.5 >>= fun () ->
     Store.get store2 key >>= function
     | Some "foo" -> Lwt.return_true
     | _ -> Lwt.return_false)
   in
-  Printf.eprintf "test\n";
   begin match Lwt_main.run (Lwt_list.map_s (fun x->x) [store_ok; get_ok]) with
   | [true; true] -> OUnit.assert_bool "store, get ok" true
   | [b1; b2] -> OUnit.assert_bool (Printf.sprintf "store: %B, get: %B" b1 b2) false
