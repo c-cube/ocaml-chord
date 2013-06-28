@@ -835,8 +835,9 @@ module Make(Net : NET)(Config : CONFIG) = struct
       let node = Ring.node_of_bencode dht.ring node in
       _log ~dht "%s said: consider %s"
         (_addr_to_str sender) (ID.to_string node.Ring.n_id);
-      (* send a "ping" to this node, see if it's alive *)
-      _ping_node ~dht node
+      (* potentially better predecessor, ping it *)
+      if Ring.between_strict node (Ring.predecessor dht.ring) dht.local
+        then _ping_node ~dht node
     | B.S "predecessor", Some tag ->
       _reply_predecessor ~dht tag
     | B.L [B.S "msg"; msg], _ -> (* deliver message *)
