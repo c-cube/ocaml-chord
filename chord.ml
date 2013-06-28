@@ -59,8 +59,6 @@ module type NET = sig
 
   type event =
     | Receive of Address.t * Bencode.t   (* received message *)
-    | ConnectionUp (* connection is up again *)
-    | ConnectionDown  (* connection was cut *)
     | Stop  (* stop the DHT *)
 
   val events : t -> event Signal.t
@@ -165,8 +163,6 @@ module MakeRPC(Net : NET) : RPC with module Net = Net = struct
   (* handle network event *)
   let handle_event rpc ev = match ev with
     | Net.Stop -> stop rpc; false
-    | Net.ConnectionUp
-    | Net.ConnectionDown -> true
     | Net.Receive (addr, msg) ->
       begin match msg with
         | B.L [ B.S "ntfy"; msg' ] ->

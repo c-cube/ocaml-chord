@@ -57,8 +57,6 @@ module type NET = sig
 
   type event =
     | Receive of Address.t * Bencode.t   (* received message *)
-    | ConnectionUp (* connection is up again *)
-    | ConnectionDown  (* connection was cut *)
     | Stop  (* stop the DHT *)
 
   val events : t -> event Signal.t

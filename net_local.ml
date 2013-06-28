@@ -42,8 +42,6 @@ end
 
 type event =
   | Receive of Address.t * Bencode.t   (* received message *)
-  | ConnectionUp (* connection is up again *)
-  | ConnectionDown  (* connection was cut *)
   | Stop  (* stop the DHT *)
 
 type t = {
@@ -69,9 +67,7 @@ let enable_log ?(on=stderr) t =
         true
       | Stop ->
         Printf.fprintf on "[net %s]: stop\n" t.address;
-        false
-      | _ -> true);
-
+        false);
   ()
 
 let create ?(log=false) () =
