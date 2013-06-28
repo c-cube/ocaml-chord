@@ -25,7 +25,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 (** {1 Single process Network implementation} *)
 
-include Chord.NET with type Address.t = int
+include Chord.NET with type Address.t = string
   (** Adresses are just a handle to some in-memory object *)
 
 val create : ?log:bool -> unit -> t
@@ -34,7 +34,7 @@ val create : ?log:bool -> unit -> t
 val address_of : t -> Address.t
   (** Address of a node *)
 
-val get : int -> t
+val get : Address.t -> t
   (** Access a node by its address. May raise [Not_found]. *)
 
 val stop : t -> unit

@@ -28,13 +28,13 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 module B = Bencode
 
 module Address = struct
-  type t = int
+  type t = string
     (** Adresses are just a handle to some thread *)
 
-  let encode a = B.I a
+  let encode a = B.S a
 
   let decode = function
-    | B.I i -> i
+    | B.S a -> a
     | _ -> raise (Invalid_argument "bad address")
 
   let eq a b = a = b
@@ -49,7 +49,7 @@ type event =
 type t = {
   events : event Signal.t;
   sent : (Address.t * Bencode.t) Signal.t;
-  address : int;
+  address : string;
 }
 
 let __table = Hashtbl.create 15
@@ -58,17 +58,17 @@ let __count = ref 0
 let enable_log ?(on=stderr) t =
   Signal.on t.sent
     (fun (to_, msg) ->
-      Printf.fprintf on "[net %d]: send %s to %i\n"
+      Printf.fprintf on "[net %s]: send %s to %s\n"
         t.address (B.pretty_to_str msg) to_;
       true);
   Signal.on t.events
     (function
       | Receive (from_, msg) ->
-        Printf.fprintf on "[net %d]: receive %s from %i\n"
+        Printf.fprintf on "[net %s]: receive %s from %s\n"
           t.address (B.pretty_to_str msg) from_;
         true
       | Stop ->
-        Printf.fprintf on "[net %d]: stop\n" t.address;
+        Printf.fprintf on "[net %s]: stop\n" t.address;
         false
       | _ -> true);
 
@@ -78,7 +78,7 @@ let create ?(log=false) () =
   let t = {
     events = Signal.create ();
     sent = Signal.create ();
-    address = !__count;
+    address = Printf.sprintf "addr_%d" !__count;
   } in
   incr __count;
   Hashtbl.add __table t.address t;  (* to access the node by its ID *)
