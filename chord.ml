@@ -521,7 +521,13 @@ module Make(Net : NET)(Config : CONFIG) = struct
     let _between i j k =
       if BI.le_big_int j k
         then (BI.le_big_int j i && BI.le_big_int i k)
-        else (BI.le_big_int k i || BI.le_big_int i j)
+        else (BI.le_big_int j i || BI.le_big_int i k)
+
+    (* same as [_between], but excluding the bounds *)
+    let _between_strict i j k =
+      if BI.le_big_int j k
+        then (BI.lt_big_int j i && BI.lt_big_int i k)
+        else (BI.lt_big_int j i || BI.lt_big_int i k)
 
     (* [n] is within [[left ... right]] *)
     let between n left right =
@@ -529,7 +535,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
     (* [n] is within [\]left ... right\[] *)
     let between_strict n left right =
-      _between n.n_id (_succ left.n_id) (_pred right.n_id)
+      _between_strict n.n_id left.n_id right.n_id
 
     (* get node by ID *)
     let get ring id =
@@ -574,7 +580,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
           n :: find ring (BI.succ_big_int n.n_id) (k-1)
       in
       find ring (BI.succ_big_int ring.local.n_id) k
-      
 
     (* the known node that immediately precedes [id] *)
     let _closest_preceding_node ring id =
@@ -758,11 +763,21 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   (* ping the node, to check it's still alive *)
   let _ping_node ~dht node =
-    AddressList.iter node.Ring.n_addresses
+    let l = AddressList.to_list node.Ring.n_addresses in
+    let fut = Lwt_list.exists_p
       (fun addr ->
+        let fut, promise = Lwt.wait () in
         _ping ~dht addr
           (fun alive ->
-            if alive then Ring.touch dht.ring ~from:addr ~node))
+            if alive then begin
+              Ring.touch dht.ring ~from:addr ~node;
+              Lwt.wakeup promise true (* success *)
+            end
+              else Lwt.wakeup promise false);
+        fut)
+      l
+    in
+    fut
 
   (* reply to a "ping" message *)
   let _pong ~dht tag =
@@ -829,13 +844,12 @@ module Make(Net : NET)(Config : CONFIG) = struct
     | B.S "ping", Some tag -> (* must reply to the "ping" *)
       _pong ~dht tag
     | B.L [B.S "consider"; node], None ->
-      (* XXX: possible vulnerability, we don't know whether this node does exist *)
       let node = Ring.node_of_bencode dht.ring node in
       _log ~dht "%s said: consider %s"
         (_addr_to_str sender) (ID.to_string node.Ring.n_id);
       (* potentially better predecessor, ping it *)
       if Ring.between_strict node (Ring.predecessor dht.ring) dht.local
-        then _ping_node ~dht node
+        then Lwt.ignore_result (_ping_node ~dht node)
     | B.S "predecessor", Some tag ->
       _reply_predecessor ~dht tag
     | B.L [B.S "msg"; B.S sender_id; msg], _ -> (* deliver message *)
@@ -874,10 +888,12 @@ module Make(Net : NET)(Config : CONFIG) = struct
           | None -> ()
           | Some node ->
             (* ping predecessor of successor *)
-            _ping_node ~dht node;
-            (* new successor is better? stabilize again! *)
-            if Ring.between_strict node dht.local n
-              then Net.call_in 0.1 (fun () -> _stabilize ~dht)
+            let fut = _ping_node ~dht node in
+            Lwt.on_success fut
+              (fun success ->
+              if success && Ring.between_strict node dht.local n
+                then (* new successor is better? stabilize again! *)
+                  Net.call_in 0.1 (fun () -> _stabilize ~dht))
           end;
           (* notify the successor of our presence *)
           let addr = AddressList.pick (Ring.successor dht.ring).Ring.n_addresses in
@@ -895,7 +911,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
       (function
         | None -> ()   (* no finger *)
         | Some node -> (* new finger may be found *)
-          _ping_node ~dht node)
+          Lwt.ignore_result (_ping_node ~dht node))
 
   (* update the fingers table *)
   let rec _fix_fingers ~dht =
@@ -922,7 +938,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
   (* TODO: run a Lwt thread that will wait until next things to do;
      maybe, write a scheduler for this... or use Net.call_in every time we
      schedule a future task *)
-  (* TODO use the ring to manage topology *)
 
   (* create a new DHT node *)
   let create ?(log=false) ?id ?(payload="") net =
