@@ -58,7 +58,7 @@ let on s f =
   (* resize handlers if needed *)
   (if s.n = Array.length s.handlers
     then begin
-      let handlers = Array.create (2* s.n) nop_handler in
+      let handlers = Array.create (s.n + 4) nop_handler in
       Array.blit s.handlers 0 handlers 0 s.n;
       s.handlers <- handlers
     end);
