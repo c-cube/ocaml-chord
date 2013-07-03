@@ -34,34 +34,31 @@ module type S = sig
   type key = id
   type value = string
 
-  type t
-    (** A key/value distributed store, on top of the given {! DHT} module *)
-
-  val create : ?gc:int -> DHT.t -> t
+  val setup : ?gc:int -> DHT.t -> unit
     (** Create a key/value store that uses this DHT. The optional [gc]
         parameter is used to remove key/value pairs that have not been
         accessed for [gc] seconds. By default, key/value pairs are kept
         forever. *)
 
-  val get : t -> key -> value option Lwt.t
+  val get : DHT.t -> key -> value option Lwt.t
     (** Get the value associated to this key, if it can be found *)
 
-  val store : t -> key -> value -> bool Lwt.t
+  val store : DHT.t -> key -> value -> bool Lwt.t
     (** Store the given [key -> value] in the DHT *)
 
-  val iter : t -> (key -> value -> unit) -> unit
+  val iter : DHT.t -> (key -> value -> unit) -> unit
     (** Key/value pairs stored in the given store *)
 
-  val on_timeout : t -> (key * value) Signal.t
+  val on_timeout : DHT.t -> (key * value) Signal.t
 
-  val on_store : t -> (key * value) Signal.t
+  val on_store : DHT.t -> (key * value) Signal.t
 end
 
 (* TODO: use the overlay RPC of the DHT *)
 
 module Make(DHT : Chord.S) = struct
   module DHT = DHT
-  module Rpc = DHT.Rpc
+  module Rpc = DHT.AsRPC
 
   type id = DHT.ID.t
   type key = id
@@ -114,7 +111,7 @@ module Make(DHT : Chord.S) = struct
           let msg = B.S cell.pc_value in
           (* value still used *)
           _touch_cell ~store cell;
-          Rpc.reply (DHT.rpc store.dht) tag msg
+          Rpc.reply store.dht tag msg
         end
     with Not_found ->
       DHT.log store.dht "no such key";
@@ -125,7 +122,7 @@ module Make(DHT : Chord.S) = struct
     if IHashtbl.mem store.table key
       then  (* collision; signal failure *)
         let msg = B.I 0 in
-        Rpc.reply (DHT.rpc store.dht) tag msg
+        Rpc.reply store.dht tag msg
       else begin
         DHT.log store.dht "store: put %s -> %s" (DHT.ID.to_string key) value;
         (* store key/value *)
@@ -133,7 +130,7 @@ module Make(DHT : Chord.S) = struct
         IHashtbl.add store.table key cell;
         (* signal success *)
         let msg = B.I 1 in
-        Rpc.reply (DHT.rpc store.dht) tag msg;
+        Rpc.reply store.dht tag msg;
         (* TODO: notify a few successors to replicate the key/value *)
         Signal.send store.on_store (key,value);
       end
@@ -194,34 +191,47 @@ module Make(DHT : Chord.S) = struct
       on_store = Signal.create ();
     } in
     (* listen for incoming RPC messages *)
-    Signal.on (Rpc.received (DHT.rpc dht)) (_handle_message ~store);
+    Signal.on (Rpc.received dht) (_handle_message ~store);
     (* check GC *)
     _check_gc ~store;
     store
 
-  let get store key =
-    let fut = DHT.find_node store.dht key in
+  let get_store =
+    let inj = DHT.Mixtbl.access () in
+    fun ?gc dht ->
+      try DHT.Mixtbl.get ~inj dht "store.store"
+      with Not_found ->
+        let s = create ?gc dht in
+        DHT.Mixtbl.set ~inj dht "store.store" s;
+        s
+
+  (** Setup a store on top of the given DHT *)
+  let setup ?gc dht =
+    ignore (get_store ?gc dht)
+
+  let get dht key =
+    let fut = DHT.find_node dht key in
     Lwt.bind fut
       (function
         | None -> Lwt.return_none
         | Some node ->
-          let addr = List.hd (DHT.addresses node) in
+          let addr = DHT.id node in
           let msg = B.L [ B.S "store.get"; B.S (DHT.ID.to_string key)] in
-          let fut' = Rpc.send ~timeout:5. (DHT.rpc store.dht) addr msg in
+          let fut' = Rpc.send ~timeout:5. dht addr msg in
           Lwt.bind fut'
             (function
               | Some (B.S value) -> Lwt.return (Some value)
               | _ -> Lwt.return_none))
 
-  let store store key value =
-    let fut = DHT.find_node store.dht key in
+  let store dht key value =
+    let fut = DHT.find_node dht key in
     Lwt.bind fut
       (function
         | None -> Lwt.return_false
         | Some node ->
-          let addr = List.hd (DHT.addresses node) in
+          let addr = DHT.id node in
           let msg = B.L [ B.S "store.set"; B.S (DHT.ID.to_string key); B.S value] in
-          let fut' = Rpc.send ~timeout:5. (DHT.rpc store.dht) addr msg in
+          let fut' = Rpc.send ~timeout:5. dht addr msg in
           Lwt.bind fut'
             (function
               | Some (B.I 0) -> Lwt.return_false
@@ -229,13 +239,13 @@ module Make(DHT : Chord.S) = struct
               | _ -> Lwt.return_false))
 
   (* iterate on pairs that are still alive *)
-  let iter store k =
+  let iter dht k =
     IHashtbl.iter
       (fun _ pair -> if is_valid pair then k pair.pc_key pair.pc_value)
-      store.table
+      (get_store dht).table
 
-  let on_timeout store = store.on_timeout
+  let on_timeout dht = (get_store dht).on_timeout
 
-  let on_store store = store.on_store
+  let on_store dht = (get_store dht).on_store
 end
 

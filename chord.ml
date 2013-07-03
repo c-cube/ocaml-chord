@@ -379,7 +379,7 @@ module type S = sig
   module OverlayNet : NET with type Address.t = ID.t and type t = t
     (** See the DHT as a networking device *)
 
-  module AsRPC : RPC with module Net = OverlayNet
+  module AsRPC : RPC with module Net = OverlayNet and type t = t
     (** Remote procedure calls on the overlay network *)
 
   (** {2 Misc} *)
@@ -835,7 +835,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
       | None -> ()  (* could not find ID *)
       | Some node ->
         (* found the recipient of the message, now send it the message *)
-        let msg' = B.L [B.S "msg"; msg] in
+        let msg' = B.L [B.S "msg"; B.S (ID.to_string dht.local.Ring.n_id); msg] in
         Rpc.notify dht.rpc (AddressList.pick node.Ring.n_addresses) msg')
 
   (* reply to a "hello" message *)
@@ -1096,15 +1096,56 @@ module Make(Net : NET)(Config : CONFIG) = struct
       | Receive of Address.t * Bencode.t   (* received message *)
       | Stop  (* stop the DHT *)
 
-    let events dht =
-      let s = Signal.create () in
-      Signal.on dht.messages
-        (fun (sender,m) -> Signal.send s (Receive(sender, m)); true);
-      Lwt.on_success dht.on_stop (fun () -> Signal.send s Stop);
-      s
+    let events =
+      let inj = Mixtbl.access () in
+      let get dht =
+        try Mixtbl.get ~inj dht "dht.overlaynet"
+        with Not_found ->
+          let s = Signal.create () in
+          Signal.on dht.messages
+            (fun (sender,m) -> Signal.send s (Receive(sender, m)); true);
+          Lwt.on_success dht.on_stop (fun () -> Signal.send s Stop);
+          Mixtbl.set ~inj dht "dht.overlaynet" s;
+          s
+      in
+      get
 
     let call_in = Net.call_in
   end
 
-  module AsRPC = MakeRPC(OverlayNet)
+  module AsRPC = struct
+    module Net = OverlayNet
+    module R = MakeRPC(OverlayNet)   (* raw implem *)
+
+    let inj = Mixtbl.access ()
+
+    let get_rpc dht =
+      try Mixtbl.get ~inj dht "dht.rpc"
+      with Not_found ->  (* create rpc *)
+        let rpc = R.create dht in
+        Mixtbl.set ~inj dht "dht.rpc" rpc;
+        rpc
+
+    type t = dht
+    type reply_tag = R.reply_tag
+    type address = Net.Address.t
+
+    let create ?frequency net =
+      failwith "Dht.AsRPC: create makes no sense, use the DHT directly"
+
+    let notify dht addr msg =
+      R.notify (get_rpc dht) addr msg
+
+    let send dht ?timeout addr msg =
+      R.send (get_rpc dht) ?timeout addr msg
+
+    let reply dht tag msg =
+      R.reply (get_rpc dht) tag msg
+
+    let received dht =
+      R.received (get_rpc dht)
+
+    let stop dht =
+      R.stop (get_rpc dht)
+  end
 end

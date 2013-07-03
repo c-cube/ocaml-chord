@@ -34,27 +34,24 @@ module type S = sig
   type key = id
   type value = string
 
-  type t
-    (** A key/value distributed store, on top of the given {! DHT} module *)
-
-  val create : ?gc:int -> DHT.t -> t
+  val setup : ?gc:int -> DHT.t -> unit
     (** Create a key/value store that uses this DHT. The optional [gc]
         parameter is used to remove key/value pairs that have not been
         accessed for [gc] seconds. By default, key/value pairs are kept
         forever. *)
 
-  val get : t -> key -> value option Lwt.t
+  val get : DHT.t -> key -> value option Lwt.t
     (** Get the value associated to this key, if it can be found *)
 
-  val store : t -> key -> value -> bool Lwt.t
+  val store : DHT.t -> key -> value -> bool Lwt.t
     (** Store the given [key -> value] in the DHT *)
 
-  val iter : t -> (key -> value -> unit) -> unit
+  val iter : DHT.t -> (key -> value -> unit) -> unit
     (** Key/value pairs stored in the given store *)
 
-  val on_timeout : t -> (key * value) Signal.t
+  val on_timeout : DHT.t -> (key * value) Signal.t
 
-  val on_store : t -> (key * value) Signal.t
+  val on_store : DHT.t -> (key * value) Signal.t
 end
 
 module Make(DHT : Chord.S) : S with module DHT = DHT

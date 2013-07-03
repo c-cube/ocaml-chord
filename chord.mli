@@ -248,7 +248,7 @@ module type S = sig
   module OverlayNet : NET with type Address.t = ID.t and type t = t
     (** See the DHT as a networking device *)
 
-  module AsRPC : RPC with module Net = OverlayNet
+  module AsRPC : RPC with module Net = OverlayNet and type t = t
     (** Remote procedure calls on the overlay network *)
 
   (** {2 Misc} *)

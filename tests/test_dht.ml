@@ -40,16 +40,13 @@ let test_dht () =
   end;
   (* stabilize *)
   Lwt_main.run (Lwt_unix.sleep 2.);
-  (* build a store *)
-  let all_stores = List.map Store.create all_dht in
-  let store1, store2 =
-    match all_stores with | s1 :: s2 :: _ -> s1, s2 | _ -> assert false
-  in
+  (* setup stores *)
+  List.iter Store.setup all_dht;
   let key = Dht.ID.of_string "1" in
-  let store_ok = Store.store store1 key "foo" in
+  let store_ok = Store.store dht1 key "foo" in
   let get_ok =
    (Lwt_unix.sleep 0.5 >>= fun () ->
-    Store.get store2 key >>= function
+    Store.get dht2 key >>= function
     | Some "foo" -> Lwt.return_true
     | _ -> Lwt.return_false)
   in
