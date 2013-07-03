@@ -1,12 +1,22 @@
 
 open OUnit
 
+(* Custom config with lower values *)
+module TestConf = struct
+  include Chord.ConfigDefault
+
+  let dimension = 5
+  let timeout = 1.
+end
+
 module B = Bencode
-module Dht = Chord.Make(Net_local)(Chord.ConfigDefault)
+module Dht = Chord.Make(Net_local)(TestConf)
 module Store = Store.Make(Dht)
+module Broadcast = Broadcast.Make(Dht)
 
 let log_net = ref false
 let log_dht = ref true
+let log_broadcast = ref true
 
 let (>>=) = Lwt.(>>=)
 
@@ -55,6 +65,15 @@ let test_dht () =
   | [b1; b2] -> OUnit.assert_bool (Printf.sprintf "store: %B, get: %B" b1 b2) false
   | _ -> assert false
   end;
+  (* broadcast *)
+  let n = ref 0 in
+  List.iter (fun dht -> Broadcast.start_broadcast ~log:!log_broadcast dht) all_dht;
+  List.iter
+    (fun dht -> Signal.on (Broadcast.on_broadcast dht) (fun _ -> incr n; true)) all_dht;
+  Broadcast.broadcast dht1 (B.I 0);
+  Lwt_main.run (Lwt_unix.sleep 0.3);
+  OUnit.assert_equal ~msg:"received all broadcasts"
+    ~printer:string_of_int (List.length all_dht -1) !n;
   (* termination *)
   Lwt_main.run
     (Lwt.join
