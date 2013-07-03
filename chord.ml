@@ -358,6 +358,22 @@ module type S = sig
         but it is still an interesting information (especially about immediate
         redundancy). *)
 
+  (** {2 Mixtbl store for adding features to the DHT} *)
+
+  module Mixtbl : sig
+    val table : t -> string Mixtbl.t
+      (** Raw access to the mixtbl *)
+
+    val access : unit -> (string,'a) Mixtbl.injection
+      (** New accessor for some type 'a *)
+
+    val set : inj:(string,'a) Mixtbl.injection -> t -> string -> 'a -> unit
+      (** Add a key/value pair *)
+
+    val get : inj:(string,'a) Mixtbl.injection -> t -> string -> 'a
+      (** Retrieve the value for this given key, or @raise Not_found *)
+  end
+
   (** {2 Overlay network} *)
 
   module OverlayNet : NET with type Address.t = ID.t and type t = t
@@ -664,6 +680,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
     changes : change_event Signal.t;
     do_stop : unit Lwt.u;
     on_stop : unit Lwt.t;
+    mixtbl : string Mixtbl.t;   (* extensible table *)
   } (** The local node *)
   and change_event =
     | NewNode of node
@@ -966,6 +983,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
       changes = Signal.create ();
       do_stop;
       on_stop;
+      mixtbl = Mixtbl.create 13;
     } in
     Signal.on
       (Ring.on_timeout dht.ring)
@@ -1039,6 +1057,22 @@ module Make(Net : NET)(Config : CONFIG) = struct
   let wait dht = dht.on_stop
 
   let log dht format = _log ~dht format
+
+  (** {2 Mixtbl store for adding features to the DHT} *)
+
+  module Mixtbl = struct
+    let table dht = dht.mixtbl
+
+    let access () = Mixtbl.access ()
+
+    let set ~inj dht key value =
+      Mixtbl.set ~inj dht.mixtbl key value
+
+    let get ~inj dht key =
+      Mixtbl.find ~inj dht.mixtbl key
+  end
+
+  (** {2 Overlay network and RPC} *)
 
   type dht = t
   module OverlayNet = struct

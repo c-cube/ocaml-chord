@@ -25,6 +25,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 (** {6 Key/value store} *)
 
+(** FIXME: no replication of key/values is done for now. *)
+
 module type S = sig
   module DHT : Chord.S
 

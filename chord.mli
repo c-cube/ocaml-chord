@@ -227,6 +227,22 @@ module type S = sig
         but it is still an interesting information (especially about immediate
         redundancy). *)
 
+  (** {2 Mixtbl store for adding features to the DHT} *)
+
+  module Mixtbl : sig
+    val table : t -> string Mixtbl.t
+      (** Raw access to the mixtbl *)
+
+    val access : unit -> (string,'a) Mixtbl.injection
+      (** New accessor for some type 'a *)
+
+    val set : inj:(string,'a) Mixtbl.injection -> t -> string -> 'a -> unit
+      (** Add a key/value pair *)
+
+    val get : inj:(string,'a) Mixtbl.injection -> t -> string -> 'a
+      (** Retrieve the value for this given key, or @raise Not_found *)
+  end
+
   (** {2 Overlay network} *)
 
   module OverlayNet : NET with type Address.t = ID.t and type t = t

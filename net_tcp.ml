@@ -125,7 +125,7 @@ let mk_socket () =
 let _remove_client t addr =
   AddrHashtbl.remove t.client_threads addr
 
-(* handle given client *)
+(* handle given client, reading messages from the socket *)
 let _handle_client t s addr =
   let d = B.mk_decoder () in
   let buf = String.make 256 ' ' in
