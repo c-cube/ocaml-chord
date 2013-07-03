@@ -235,8 +235,9 @@ module type S = sig
           ID [(local + 2 ** k) mod 2 ** dimension] *)
 
     val between : ID.t -> ID.t -> ID.t -> bool
-
     val between_strict : ID.t -> ID.t -> ID.t -> bool
+    val succ : ID.t -> ID.t
+    val pred : ID.t -> ID.t
   end
 
   (** {2 Register to events} *)

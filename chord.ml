@@ -359,8 +359,9 @@ module type S = sig
           ID [(local + 2 ** k) mod 2 ** dimension] *)
 
     val between : ID.t -> ID.t -> ID.t -> bool
-
     val between_strict : ID.t -> ID.t -> ID.t -> bool
+    val succ : ID.t -> ID.t
+    val pred : ID.t -> ID.t
   end
 
   (** {2 Register to events} *)
@@ -557,7 +558,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
     (* same as [_between], but excluding the bounds *)
     let _between_strict i j k =
-      if BI.le_big_int j k
+      if BI.lt_big_int j k
         then (BI.lt_big_int j i && BI.lt_big_int i k)
         else (BI.lt_big_int j i || BI.lt_big_int i k)
 
@@ -962,11 +963,11 @@ module Make(Net : NET)(Config : CONFIG) = struct
   let _random_id () =
     let i = ref BI.zero_big_int in
     let sixteen = BI.big_int_of_int 16 in
-    for j = 0 to (n/16) - 1 do
+    for j = 0 to max ((n/16) - 1) 1 do
       let r = Random.int (1 lsl 16) in
       i := BI.add_big_int (BI.mult_big_int sixteen !i) (BI.big_int_of_int r)
     done;
-    !i
+    Ring._modulo !i
 
   (* TODO: run a Lwt thread that will wait until next things to do;
      maybe, write a scheduler for this... or use Net.call_in every time we
@@ -1085,6 +1086,8 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
     let between = Ring._between
     let between_strict = Ring._between_strict
+    let succ = Ring._succ
+    let pred = Ring._pred
   end
 
   (** {2 Mixtbl store for adding features to the DHT} *)
