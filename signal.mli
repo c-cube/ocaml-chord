@@ -42,5 +42,5 @@ val once : 'a t -> ('a -> 'b) -> unit
   (** Register a handler to be called only once *)
 
 val propagate : 'a t -> 'a t -> unit
-  (** [chain a b] propagates all values of [a] into [b]. Cycles
+  (** [propagate a b] propagates all values of [a] into [b]. Cycles
       are not detected. *)

@@ -54,8 +54,6 @@ module type S = sig
   val on_store : DHT.t -> (key * value) Signal.t
 end
 
-(* TODO: use the overlay RPC of the DHT *)
-
 module Make(DHT : Chord.S) = struct
   module DHT = DHT
   module Rpc = DHT.AsRPC

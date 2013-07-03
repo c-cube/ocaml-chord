@@ -57,7 +57,7 @@ module type NET = sig
 
   type event =
     | Receive of Address.t * Bencode.t   (* received message *)
-    | Stop  (* stop the DHT *)
+    | Stop  (* stopped receiving messages*)
 
   val events : t -> event Signal.t
     (** Signal transmitting events that occur on the network *)
@@ -176,7 +176,13 @@ module type S = sig
   type node
    (** The representation of a node of the DHT. It relates an ID (a hash
         uniquely identifying the remote node in the DHT) to a network address
-        and a node payload (private key, owner metadata, etc.) *)
+        and a node payload (private key, owner metadata, etc.).
+        
+        There is an injection from IDs to nodes, but not all IDs
+        are necessarily used at a given time. The distinction
+        between [t] and [node] is that [node] represents any
+        participant to the DHT, whereas [t] is responsible for
+        the local node (the one in this OCaml process). *)
 
   val random_id : unit -> ID.t
     (** A fresh, unique ID usable on the network *)
@@ -188,7 +194,7 @@ module type S = sig
         created node. *)
 
   val local : t -> node
-    (** Node that represents this very DHT node *)
+    (** Node that represents this very DHT instance. *)
 
   val rpc : t -> Rpc.t
     (** RPC instance *)
@@ -197,24 +203,25 @@ module type S = sig
     (** ID of the given DHT node *)
 
   val addresses : node -> address list
-    (** Address(es) the node can be contacted with. *)
+    (** Address(es) the node can be contacted with, to our knowledge. *)
 
   val payload : node -> string
     (** Payload of a node *)
 
   val connect : t -> address -> node option Lwt.t
-    (** Try to connect to the remote note, returns the remote node
+    (** Try to connect to the remote node, returns a proxy to it
         on success. *)
 
   val find_node : t -> ID.t -> node option Lwt.t
-    (** Returns the successor node of the given ID. It may fail, in
+    (** Returns the successor node of the given ID, ie the node whose ID
+        is the first one to be bigger or equal to the given ID. It may fail, in
         which case [None] is returned. *)
 
   val successor : t -> node
-    (** Current successor of this node *)
+    (** Current successor of this node in the Chord *)
 
   val successors : t -> int -> node list
-    (** Find the [k] successors of this node *)
+    (** [successors dht k] finds the [k] successors of [dht] *)
 
   (** {2 Register to events} *)
 
@@ -228,6 +235,9 @@ module type S = sig
         redundancy). *)
 
   (** {2 Mixtbl store for adding features to the DHT} *)
+
+  (** This section is to be used by modules  that want to store data
+      in the local DHT instance (See for instance {! Store} or {! AsRPC}). *)
 
   module Mixtbl : sig
     val table : t -> string Mixtbl.t
@@ -245,6 +255,12 @@ module type S = sig
 
   (** {2 Overlay network} *)
 
+  (** The two following modules allow the user to use the DHT as if it were
+      a Network implementation (signature {! NET}), respectively a RPC
+      messaging system. Messages can be sent to nodes by their ID, and
+      even if an ID does not exist, the message will be sent to its
+      successor ID (See {!find_node}). *)
+
   module OverlayNet : NET with type Address.t = ID.t and type t = t
     (** See the DHT as a networking device *)
 
@@ -260,13 +276,15 @@ module type S = sig
     (** Wait for the DHT to stop *)
 
   val stop : t -> unit
-    (** Stop the DHT *)
+    (** Stop the DHT. It will no respond to messages nor maintain
+        topological invariants anymore. *)
 
   val stopped : t -> bool
     (** Is the DHT already stopped? *)
 
   val log : t -> ('a, Buffer.t, unit, unit) format4 -> 'a
-    (** Log a message *)
+    (** Log a message to channels on which {!enable_log} has
+        been called. *)
 end
 
 module Make(Net : NET)(Config : CONFIG)

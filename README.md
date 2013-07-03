@@ -4,6 +4,7 @@ A modular DHT implementation based on
 [chord](http://en.wikipedia.org/wiki/Chord_%28peer-to-peer%29). It is
 not bound to a particular transport, only assuming that `B-encode` values
 can be sent, and that the receiver knows where messages come from.
+Theoretically, one could even build a DHT on top of e-mails ;).
 
 ## Build
 
@@ -20,7 +21,7 @@ and it should build the library.
 
 ## TODO
 
-- an implementation that uses local Lwt threads as nodes, to test the DHT
-    in a single process
-- an implementation that uses Lwt with UDP messages
-- a CLI tool based on the UDP implementation
+- test TCP implementation
+- simple IRC-like messaging protocol (with broadcasting protocol)
+- a CLI tool with TCP implementation
+
