@@ -717,7 +717,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
   (* print a log message *)
   let _log ~dht format =
     let b = Buffer.create 15 in
-    Printf.bprintf b "[dht %5s at %.2f] "
+    Printf.bprintf b "[dht %s at %.2f] "
       (ID.to_string dht.ring.Ring.local.Ring.n_id) (Unix.gettimeofday () -. _start_time);
     Printf.kbprintf
       (fun b ->
