@@ -217,11 +217,27 @@ module type S = sig
         is the first one to be bigger or equal to the given ID. It may fail, in
         which case [None] is returned. *)
 
-  val successor : t -> node
-    (** Current successor of this node in the Chord *)
+  (** {2 Topology of the network} *)
 
-  val successors : t -> int -> node list
-    (** [successors dht k] finds the [k] successors of [dht] *)
+  module Topology : sig
+
+    val successor : t -> node
+      (** Current successor of this node in the Chord *)
+
+    val predecessor : t -> node
+      (** Immediate predecessor in the Chord *)
+
+    val successors : t -> int -> node list
+      (** [successors dht k] finds the [k] successors of [dht] *)
+
+    val finger : t -> int -> node
+      (** [finger dht k] is the [k]-th finger, ie the successor of the 
+          ID [(local + 2 ** k) mod 2 ** dimension] *)
+
+    val between : ID.t -> ID.t -> ID.t -> bool
+
+    val between_strict : ID.t -> ID.t -> ID.t -> bool
+  end
 
   (** {2 Register to events} *)
 

@@ -341,11 +341,27 @@ module type S = sig
     (** Returns the successor node of the given ID. It may fail, in
         which case [None] is returned. *)
 
-  val successor : t -> node
-    (** Current successor of this node *)
+  (** {2 Topology of the network} *)
 
-  val successors : t -> int -> node list
-    (** Find the [k] successors of this node *)
+  module Topology : sig
+
+    val successor : t -> node
+      (** Current successor of this node in the Chord *)
+
+    val predecessor : t -> node
+      (** Immediate predecessor in the Chord *)
+
+    val successors : t -> int -> node list
+      (** [successors dht k] finds the [k] successors of [dht] *)
+
+    val finger : t -> int -> node
+      (** [finger dht k] is the [k]-th finger, ie the successor of the 
+          ID [(local + 2 ** k) mod 2 ** dimension] *)
+
+    val between : ID.t -> ID.t -> ID.t -> bool
+
+    val between_strict : ID.t -> ID.t -> ID.t -> bool
+  end
 
   (** {2 Register to events} *)
 
@@ -1038,12 +1054,6 @@ module Make(Net : NET)(Config : CONFIG) = struct
     _find_successor ~dht id (Lwt.wakeup promise);
     future
 
-  let successor dht =
-    Ring.successor dht.ring
-
-  let successors dht k =
-    Ring.n_successors dht.ring k
-
   let changes dht =
     dht.changes
 
@@ -1057,6 +1067,25 @@ module Make(Net : NET)(Config : CONFIG) = struct
   let wait dht = dht.on_stop
 
   let log dht format = _log ~dht format
+
+  (** {2 Topology of the network} *)
+
+  module Topology = struct
+    let successor dht =
+      Ring.successor dht.ring
+
+    let predecessor dht =
+      Ring.predecessor dht.ring
+
+    let successors dht k =
+      Ring.n_successors dht.ring k
+
+    let finger dht k =
+      Ring.finger dht.ring k
+
+    let between = Ring._between
+    let between_strict = Ring._between_strict
+  end
 
   (** {2 Mixtbl store for adding features to the DHT} *)
 
