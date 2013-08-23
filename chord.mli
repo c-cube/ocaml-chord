@@ -158,7 +158,8 @@ module type S = sig
     type t
 
     val of_string : string -> t
-      (** Parses an ID from a string, or @raise Invalid_argument *)
+      (** Parses an ID from a string, or
+          @raise Invalid_argument if the string is no valid ID *)
 
     val to_string : t -> string
 
@@ -267,7 +268,8 @@ module type S = sig
       (** Add a key/value pair *)
 
     val get : inj:(string,'a) Mixtbl.injection -> t -> string -> 'a
-      (** Retrieve the value for this given key, or @raise Not_found *)
+      (** Retrieve the value for this given key, or
+          @raise Not_found if no value is associated to this key *)
   end
 
   (** {2 Overlay network} *)
