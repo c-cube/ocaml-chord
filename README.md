@@ -19,6 +19,10 @@ Then, type
 
 and it should build the library.
 
+## License
+
+BSD2, see the file `LICENSE`
+
 ## TODO
 
 - test TCP implementation
