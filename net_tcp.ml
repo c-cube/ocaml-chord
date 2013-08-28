@@ -281,3 +281,5 @@ let call_in time f =
 
 let fmt fmt addr =
   Format.pp_print_string fmt (Address.to_string addr)
+
+let to_string = Address.to_string

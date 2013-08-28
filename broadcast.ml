@@ -44,6 +44,9 @@ module type S = sig
 
   val sent : Dht.t -> Bencode.t Signal.t
     (** Messages broadcasted from this very node *)
+
+  val recv : Dht.t -> (Dht.ID.t * Bencode.t) Lwt.t
+    (** Wait for the next broadcasted message *)
 end
 
 module Make(Dht : Chord.S) = struct
@@ -161,4 +164,11 @@ module Make(Dht : Chord.S) = struct
 
   let sent dht = 
     (get_event dht).sent
+
+  let recv dht =
+    let fut, wake = Lwt.wait () in
+    Signal.on
+      (on_broadcast dht)
+      (fun (id, msg) -> Lwt.wakeup wake (id, msg); false);
+    fut
 end

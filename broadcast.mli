@@ -47,6 +47,9 @@ module type S = sig
 
   val sent : Dht.t -> Bencode.t Signal.t
     (** Messages broadcasted from this very node *)
+
+  val recv : Dht.t -> (Dht.ID.t * Bencode.t) Lwt.t
+    (** Wait for the next broadcasted message *)
 end
 
 module Make(Dht : Chord.S) : S with module Dht = Dht
