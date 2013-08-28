@@ -25,88 +25,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 (** {6 Chord DHT} *)
 
-(** {2 Network} *)
-
-(** The network module is an abstraction over communication with other nodes.
-    It allows to designates other entities via {b addresses} (for instance,
-    process IDs, or IP+port addresses), and to send and receive messages
-    as B-encoded data. A primitive to wait is also provided.
-
-    A typical implementation may use TCP connections to send and receive
-    messages. *)
-
-module type NET = sig
-  module Address : sig
-    type t
-      (** A network address (IP:Port, typically) *)
-
-    val encode : t -> Bencode.t
-      (** Serialize the address *)
-
-    val decode : Bencode.t -> t
-      (** May raise {! Invalid_argument} *)
-
-    val eq : t -> t -> bool
-  end
-
-  type t
-    (** A node on the network *)
-
-  val send : t -> Address.t -> Bencode.t -> unit
-    (** Send a string to an address *)
-
-  type event =
-    | Receive of Address.t * Bencode.t   (* received message *)
-    | Stop  (* stopped receiving messages*)
-
-  val events : t -> event Signal.t
-    (** Signal transmitting events that occur on the network *)
-
-  val call_in : float -> (unit -> unit) -> unit
-    (** Call the function in the given amount of seconds *)
-end
-
-(** {2 RPC} *)
-
-(** This provides a lightweight RPC mechanism on top of a {!NET}
-    implementation and B-encoded messages. *)
-
-module type RPC = sig
-  module Net : NET
-
-  type address = Net.Address.t
-
-  type t
-    (** A RPC system *)
-
-  type reply_tag
-    (** A tag used to reply to messages *)
-
-  val create : ?frequency:float -> Net.t -> t
-    (** Create an instance of the RPC system, which can send and receive
-        remote function calls using the [Net.t] instance.
-        [frequency] is the frequency, in seconds, at which the
-        RPC system checks whether some replies timed out. *)
-
-  val notify : t -> address -> Bencode.t -> unit
-    (** Send a message without expecting a reply *)
-
-  val send : t -> ?timeout:float -> address -> Bencode.t -> Bencode.t option Lwt.t
-    (** Send a message, expecting a reply *)
-
-  val reply : t -> reply_tag -> Bencode.t -> unit
-    (** Reply to the message whose tag is given *)
-
-  val received : t -> (address * reply_tag option * Bencode.t) Signal.t
-    (** Signal incoming messages. The signal transmits the sender's
-        address, a reply tag (in case the sender expected a reply)
-        and the message itself *)
-
-  val stop : t -> unit
-    (** Disable all threads and active processes *)
-end
-
-module MakeRPC(Net : NET) : RPC with module Net = Net
+module type NET = Net.S
+module type RPC = Rpc.S
 
 (** {2 Configuration} *)
 
@@ -149,9 +69,9 @@ module ConfigDefault : CONFIG
 
 (** Signature of the DHT *)
 module type S = sig
-  module Net : NET
+  module Net : Net.S
   module Config : CONFIG
-  module Rpc : RPC with module Net = Net
+  module Rpc : Rpc.S with module Net = Net
 
   (** Unique identifier for a node *)
   module ID : sig

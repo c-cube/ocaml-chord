@@ -26,207 +26,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 (** {6 Chord DHT} *)
 
 module B = Bencode
+module R = Rpc
 
-(** {2 Network} *)
-
-(** The network module is an abstraction over communication with other nodes.
-    It allows to designates other entities via {b addresses} (for instance,
-    process IDs, or IP+port addresses), and to send and receive messages
-    as B-encoded data. A primitive to wait is also provided.
-
-    A typical implementation may use TCP connections to send and receive
-    messages. *)
-
-module type NET = sig
-  module Address : sig
-    type t
-      (** A network address (IP:Port, typically) *)
-
-    val encode : t -> Bencode.t
-      (** Serialize the address *)
-
-    val decode : Bencode.t -> t
-      (** May raise {! Invalid_argument} *)
-
-    val eq : t -> t -> bool
-  end
-
-  type t
-    (** A node on the network *)
-
-  val send : t -> Address.t -> Bencode.t -> unit
-    (** Send a string to an address *)
-
-  type event =
-    | Receive of Address.t * Bencode.t   (* received message *)
-    | Stop  (* stop the DHT *)
-
-  val events : t -> event Signal.t
-    (** Signal transmitting events that occur on the network *)
-
-  val call_in : float -> (unit -> unit) -> unit
-    (** Call the function in the given amount of seconds *)
-end
-
-(** {2 RPC} *)
-
-(** This provides a lightweight RPC mechanism on top of a {!NET}
-    implementation and B-encoded messages. *)
-
-module type RPC = sig
-  module Net : NET
-
-  type address = Net.Address.t
-
-  type t
-    (** A RPC system *)
-
-  type reply_tag
-    (** A tag used to reply to messages *)
-
-  val create : ?frequency:float -> Net.t -> t
-    (** Create an instance of the RPC system, which can send and receive
-        remote function calls using the [Net.t] instance.
-        [frequency] is the frequency, in seconds, at which the
-        RPC system checks whether some replies timed out. *)
-
-  val notify : t -> address -> Bencode.t -> unit
-    (** Send a message without expecting a reply *)
-
-  val send : t -> ?timeout:float -> address -> Bencode.t -> Bencode.t option Lwt.t
-    (** Send a message, expecting a reply *)
-
-  val reply : t -> reply_tag -> Bencode.t -> unit
-    (** Reply to the message whose tag is given *)
-
-  val received : t -> (address * reply_tag option * Bencode.t) Signal.t
-    (** Signal incoming messages. The signal transmits the sender's
-        address, a reply tag (in case the sender expected a reply)
-        and the message itself *)
-
-  val stop : t -> unit
-    (** Disable all threads and active processes *)
-end
-
-module MakeRPC(Net : NET) : RPC with module Net = Net = struct
-  module Net = Net
-
-  type address = Net.Address.t 
-
-  type reply_tag = {
-    rt_count : int;
-    rt_address : address;
-  } (* stores information necessary to reply to a message *)
-
-  type t = {
-    net : Net.t;
-    frequency : float;
-    mutable count : int;
-    mutable stop : bool;
-    received : (address * reply_tag option * Bencode.t) Signal.t;
-    callbacks : (int, (float * Bencode.t option Lwt.u)) Hashtbl.t;
-  } (** The RPC system *)
-
-  module B = Bencode
-
-  (* check whether some callbacks timed out *)
-  let check_timeouts rpc =
-    let to_remove = ref [] in
-    let now = Unix.gettimeofday () in
-    (* find callbacks that have expired *)
-    Hashtbl.iter
-      (fun i (ttl, promise) ->
-        if ttl < now
-          then to_remove := (i, promise) :: !to_remove)
-      rpc.callbacks;
-    (* remove all such callbacks *)
-    List.iter
-      (fun (i, promise) ->
-        Hashtbl.remove rpc.callbacks i;
-        Lwt.wakeup promise None)
-      !to_remove;
-    ()
-
-  (* wait some time, then check timeouts and loop *)
-  let rec poll rpc =
-    if rpc.stop
-      then ()
-      else
-        Net.call_in rpc.frequency
-          (fun () ->
-            check_timeouts rpc;
-            poll rpc)
-
-  let stop rpc =
-    rpc.stop <- true
-
-  (* handle network event *)
-  let handle_event rpc ev = match ev with
-    | Net.Stop -> stop rpc; false
-    | Net.Receive (addr, msg) ->
-      begin match msg with
-        | B.L [ B.S "ntfy"; msg' ] ->
-          Signal.send rpc.received (addr, None, msg')
-        | B.L [ B.S "msg"; B.I i; msg' ] ->
-          let reply_tag = { rt_count = i; rt_address = addr; } in
-          Signal.send rpc.received (addr, Some reply_tag, msg')
-        | B.L [ B.S "reply"; B.I i; msg' ] ->
-          begin try
-            (* find which promise corresponds to this reply *)
-            let _, promise = Hashtbl.find rpc.callbacks i in
-            Hashtbl.remove rpc.callbacks i;
-            Lwt.wakeup promise (Some msg');
-          with Not_found -> ()
-          end
-        | _ ->
-          Printf.eprintf "ill-formed RPC message: %s\n" (B.pretty_to_str msg)
-      end;
-      true
-
-  (* create a new RPC system *)
-  let create ?(frequency=2.0) net =
-    let rpc = {
-      net;
-      frequency;
-      count = 1;
-      stop = false;
-      received = Signal.create ();
-      callbacks = Hashtbl.create 15;
-    } in
-    poll rpc;
-    Signal.on
-      (Net.events rpc.net)
-      (fun e -> handle_event rpc e);
-    rpc
-
-  let notify rpc addr msg =
-    (if rpc.stop then failwith "RPC system stopped");
-    let msg = B.L [ B.S "ntfy"; msg ] in
-    Net.send rpc.net addr msg
-
-  let send rpc ?timeout addr msg =
-    (if rpc.stop then failwith "RPC system stopped");
-    (* future for the answer, put it in hashtable *)
-    let future, promise = Lwt.wait () in
-    let n = rpc.count in
-    rpc.count <- n + 1;
-    let ttl = match timeout with
-      | None -> infinity
-      | Some t -> (assert (t> 0.); Unix.gettimeofday () +. t)
-    in
-    Hashtbl.add rpc.callbacks n (ttl, promise);
-    (* send message wrapped in metadata *)
-    let msg' = B.L [ B.S "msg"; B.I n; msg ] in
-    Net.send rpc.net addr msg';
-    future
-
-  let reply rpc tag msg =
-    let msg' = B.L [ B.S "reply"; B.I tag.rt_count; msg ] in
-    Net.send rpc.net tag.rt_address msg'
-
-  let received rpc =
-    rpc.received
-end
+module type NET = Net.S
+module type RPC = Rpc.S
 
 (** {2 Configuration} *)
 
@@ -280,9 +83,9 @@ end
 
 (** Signature of the DHT *)
 module type S = sig
-  module Net : NET
+  module Net : Net.S
   module Config : CONFIG
-  module Rpc : RPC with module Net = Net
+  module Rpc : Rpc.S with module Net = Net
 
   (** Unique identifier for a node *)
   module ID : sig
@@ -417,7 +220,7 @@ module type S = sig
     (** Log a message *)
 end
 
-module Make(Net : NET)(Config : CONFIG) = struct
+module Make(Net : Net.S)(Config : CONFIG) = struct
   module Net = Net
 
   type address = Net.Address.t
@@ -685,7 +488,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   type node = Ring.node
 
-  module Rpc = MakeRPC(Net)
+  module Rpc = Rpc.Make(Net)
 
   type t = {
     local : Ring.node;
@@ -1147,7 +950,7 @@ module Make(Net : NET)(Config : CONFIG) = struct
 
   module AsRPC = struct
     module Net = OverlayNet
-    module R = MakeRPC(OverlayNet)   (* raw implem *)
+    module R = R.Make(OverlayNet)   (* raw implem *)
 
     let inj = Mixtbl.access ()
 
