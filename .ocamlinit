@@ -3,6 +3,8 @@
 #require "lwt";;
 #load "libchord.cma";;
 print_endline "lib loaded";;
+#install_printer Net_tcp.fmt;;
+#install_printer Net_local.fmt;;
 module B = Bencode;;
 (* vim:syntax=ocaml
 *)

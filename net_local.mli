@@ -48,3 +48,5 @@ val sent : t -> (Address.t * Bencode.t) Signal.t
 
 val enable_log : ?on:out_channel -> t -> unit
   (** Enable logging of events on this network node *)
+
+val fmt : Format.formatter -> Address.t -> unit

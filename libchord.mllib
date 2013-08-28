@@ -2,6 +2,8 @@ Chord
 Bencode
 Store
 Signal
+Net
+Rpc
 Net_local
 Net_tcp
 Lwt_queue

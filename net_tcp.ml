@@ -73,6 +73,14 @@ let mk_addr addr port =
 let mk_local_addr port =
   Unix.inet_addr_any, port
 
+let mk_by_name host port =
+  Lwt_unix.gethostbyname host >>= fun host ->
+  if Array.length host.Unix.h_addr_list = 0
+    then Lwt.return_none
+    else
+      let addr = host.Unix.h_addr_list.(0), port in
+      Lwt.return (Some addr)
+
 type event =
   | Receive of Address.t * Bencode.t   (* received message *)
   | Stop  (* stop the DHT *)
@@ -270,3 +278,6 @@ let port t = t.port
 let call_in time f =
   let fut = Lwt_unix.sleep time in
   Lwt.on_success fut f
+
+let fmt fmt addr =
+  Format.pp_print_string fmt (Address.to_string addr)

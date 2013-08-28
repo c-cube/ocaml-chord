@@ -25,11 +25,15 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 (** {1 Network implementation using TCP sockets} *)
 
-include Chord.NET with type Address.t = Unix.inet_addr * int
+include Net.S with type Address.t = Unix.inet_addr * int
   (** Adresses are just a handle to some in-memory object *)
 
 val mk_addr : string -> int -> Address.t
 val mk_local_addr : int -> Address.t
+
+val mk_by_name : string -> int -> Address.t option Lwt.t
+  (** DNS lookup to find an IP, and make an adress out of
+      it and the given port number *)
 
 val create : ?log:bool -> ?port:int -> unit -> t option
   (** Create a new network node on the given port, if provided
@@ -47,3 +51,5 @@ val sent : t -> (Address.t * Bencode.t) Signal.t
 
 val enable_log : ?on:out_channel -> t -> unit
   (** Enable logging of events on this network node *)
+
+val fmt : Format.formatter -> Address.t -> unit

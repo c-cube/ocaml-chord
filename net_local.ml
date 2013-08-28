@@ -108,3 +108,6 @@ let send_node n1 n2 msg =
   send n1 (address_of n2) msg
 
 let sent t = t.sent
+
+let fmt fmt addr =
+  Format.fprintf fmt "local_addr %s" addr
