@@ -42,13 +42,16 @@ let is_empty q =
 
 let push q x =
   Queue.push x q.queue;
-  Lwt_condition.signal q.cond ()
+  Lwt_condition.broadcast q.cond ()
 
-let pop q =
+let rec pop q =
   if Queue.is_empty q.queue
     then
       Lwt_condition.wait q.cond >>= fun () ->
-      Lwt.return (Queue.pop q.queue)
+      try
+        let x = Queue.pop q.queue in
+        Lwt.return x
+      with Queue.Empty -> pop q
     else
       Lwt.return (Queue.pop q.queue)
 

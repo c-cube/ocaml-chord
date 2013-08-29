@@ -33,7 +33,7 @@ module type S = sig
   val start_broadcast : ?log:bool -> Dht.t -> unit
     (** Enable broadcasting on this DHT instance *)
 
-  val enable_log : on:out_channel -> Dht.t -> unit
+  val enable_log : ?on:Lwt_io.output_channel -> Dht.t -> unit
     (** Enable log messages *)
 
   val broadcast : Dht.t -> Bencode.t -> unit
@@ -131,25 +131,27 @@ module Make(Dht : Chord.S) = struct
         Dht.Mixtbl.set ~inj dht "broadcast.event" t;
         t
 
-  let enable_log ~on dht =
+  let enable_log ?(on=Lwt_io.stdout) dht =
     let t = get_event dht in
     let local_id = Dht.id (Dht.local dht) in
     Signal.on t.on_broadcast
       (fun (from_addr, msg) ->
-        Printf.fprintf on "[broadcast %s] received %s from %s\n"
-          (Dht.ID.to_string local_id) (B.to_string msg) (Dht.ID.to_string from_addr);
+        let s = Printf.sprintf "[broadcast %s] received %s from %s\n"
+          (Dht.ID.to_string local_id) (B.to_string msg) (Dht.ID.to_string from_addr) in
+        Lwt.ignore_result (Lwt_io.fprint on s);
         true);
     Signal.on t.sent
       (fun msg ->
-        Printf.fprintf on "[broadcast %s] start broadcasting %s\n"
-          (Dht.ID.to_string local_id) (B.to_string msg);
+        let s = Printf.sprintf "[broadcast %s] start broadcasting %s\n"
+          (Dht.ID.to_string local_id) (B.to_string msg) in
+        Lwt.ignore_result (Lwt_io.fprint on s);
         true);
     ()
 
   (* setup broadcasting *)
   let start_broadcast ?(log=false) dht =
     ignore (get_event dht);
-    (if log then enable_log ~on:stderr dht)
+    (if log then enable_log ~on:Lwt_io.stderr dht)
     
   (* broadcast this message to every node *)
   let broadcast dht msg =

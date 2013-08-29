@@ -204,7 +204,7 @@ module type S = sig
 
   (** {2 Misc} *)
 
-  val enable_log : ?on:out_channel -> t -> unit
+  val enable_log : ?on:Lwt_io.output_channel -> t -> unit
     (** Print events related to the DHT on the given channel *)
 
   val wait : t -> unit Lwt.t
@@ -524,13 +524,14 @@ module Make(Net : Net.S)(Config : CONFIG) = struct
       (ID.to_string dht.ring.Ring.local.Ring.n_id) (Unix.gettimeofday () -. _start_time);
     Printf.kbprintf
       (fun b ->
-        Buffer.add_char b '\n';
         let s = Buffer.contents b in
         Signal.send dht.logs s)
       b format
 
-  let enable_log ?(on=stderr) dht =
-    Signal.on dht.logs (fun msg -> output_string on msg; true)
+  let enable_log ?(on=Lwt_io.stderr) dht =
+    Signal.on dht.logs
+      (fun msg ->
+        Lwt.ignore_result (Lwt_io.fprintl on msg); true)
 
   (** The wire format is B-encoded messages. At the top-level, the B-encode
       structures are composed of a constructor (indicating which method

@@ -39,7 +39,7 @@ module type S = sig
   val start_broadcast : ?log:bool -> Dht.t -> unit
     (** Enable broadcasting on this DHT instance *)
 
-  val enable_log : on:out_channel -> Dht.t -> unit
+  val enable_log : ?on:Lwt_io.output_channel -> Dht.t -> unit
     (** Enable log messages *)
 
   val broadcast : Dht.t -> Bencode.t -> unit

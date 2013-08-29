@@ -208,7 +208,7 @@ module type S = sig
 
   (** {2 Misc} *)
 
-  val enable_log : ?on:out_channel -> t -> unit
+  val enable_log : ?on:Lwt_io.output_channel -> t -> unit
     (** Print events related to the DHT on the given channel *)
 
   val wait : t -> unit Lwt.t

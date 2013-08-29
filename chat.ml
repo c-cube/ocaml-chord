@@ -43,11 +43,14 @@ let options =
 
 (* read input from the user *)
 let rec read_input dht =
-  Lwt_io.read_line Lwt_io.stdin >>= fun line ->
-  Lwt_io.printl ("send: " ^ line) >>= fun () ->
-  let msg = Bencode.S line in
-  B.broadcast dht msg;
-  read_input dht
+  Lwt_io.read_line_opt Lwt_io.stdin >>= function
+  | None
+  | Some ("\r\n" | "" | "\n") -> Lwt.return_unit
+  | Some line ->
+    Lwt_io.printl ("send: \'" ^ line ^ "\'") >>= fun () ->
+    let msg = Bencode.S line in
+    B.broadcast dht msg;
+    read_input dht
 
 (* print broadcasted messages to stdout *)
 let rec print_messages dht =
@@ -86,10 +89,10 @@ let start_client ?port addresses =
     let output = Format.sprintf "listen on port %d" (N.port net) in
     Lwt_io.printl output >>= fun () ->
     let dht = Dht.create ~log net in
-    B.enable_log ~on:stdout dht;
-    let tasks = read_input dht :: print_messages dht ::
-      List.map (connect_to dht) addresses in
-    Lwt.join tasks
+    B.enable_log dht;
+    List.iter (fun a -> Lwt.ignore_result (connect_to dht a)) addresses;
+    let tasks = [read_input dht; print_messages dht] in
+    Lwt.pick tasks
 
 let parse_addr addr =
   Scanf.sscanf addr "%s@: %d" (fun host port -> host, port)
