@@ -29,6 +29,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     "A partition-based Broadcast algorithm over DHT"
     to provide a broadcast primitive over a DHT. *)
 
+(* TODO: also broadcast to a few successors, with a table of received
+   broadcasted messages to avoid duplication, so that broadcasting
+   resists a few node failures? *)
+
 module type S = sig
   module Dht : Chord.S
 

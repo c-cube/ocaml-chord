@@ -2,7 +2,7 @@
 open OUnit
 
 module B = Bencode
-module R = Chord.MakeRPC(Net_local)
+module R = Rpc.Make(Net_local)
 
 let test_notify () =
   let n1 = Net_local.create () in
