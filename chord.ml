@@ -653,7 +653,9 @@ module Make(Net : Net.S)(Config : CONFIG) = struct
     (* first we need the address of the successor node *)
     _find_successor ~dht id
       (function
-      | None -> ()  (* could not find ID *)
+      | None ->
+        _log ~dht "could not send user message %s" (B.pretty_to_str msg);
+        ()  (* could not find ID *)
       | Some node ->
         (* found the recipient of the message, now send it the message *)
         let msg' = B.L [B.S "msg"; B.S (ID.to_string dht.local.Ring.n_id); msg] in
@@ -696,6 +698,7 @@ module Make(Net : Net.S)(Config : CONFIG) = struct
       Signal.send dht.messages (sender_id, msg)
     | B.L [B.S "hello"; sender_node], Some tag -> (* reply to hello *)
       let sender_node = Ring.node_of_bencode dht.ring sender_node in
+      Ring.touch dht.ring ~node:sender_node ~from:sender;
       _log ~dht "hello from %s" (ID.to_string sender_node.Ring.n_id);
       (* touch the node, we know it's alive *)
       Ring.touch dht.ring ~from:sender ~node:sender_node;

@@ -60,6 +60,7 @@ module Make(Dht : Chord.S) = struct
 
   (* broadcast the given message [msg], up to [limit_id] *)
   let _broadcast dht from_id limit_id msg =
+    Dht.log dht "[b] send to all %s" (B.pretty_to_str msg);
     let local_id = Dht.id (Dht.local dht) in
     (* right child *)
     let right = ref None in
@@ -88,7 +89,9 @@ module Make(Dht : Chord.S) = struct
           B.S (Dht.ID.to_string from_id);
           B.S (Dht.ID.to_string limit_id);
           msg ] in
+      Dht.log dht "notify";
       Rpc.notify dht (Dht.id right) msg';
+      Dht.log dht "notified";
       (* if left exists, also send it the broadcast message
         with [right] as the new limit *)
       match !left with
@@ -105,6 +108,7 @@ module Make(Dht : Chord.S) = struct
   let _handle_received dht t (_, reply_tag, msg) =
     match msg with
     | B.L [ B.S "broadcast"; B.S from_id; B.S limit; msg' ] ->
+      Dht.log dht "[b] received broadcast %s" (B.pretty_to_str msg');
       begin try
         let from_id = Dht.ID.of_string from_id in
         let limit_id = Dht.ID.of_string limit in
