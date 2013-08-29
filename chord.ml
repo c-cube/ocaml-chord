@@ -249,7 +249,7 @@ module Make(Net : Net.S)(Config : CONFIG) = struct
 
     (* add/refresh the given address *)
     let touch l addr =
-      if mem l addr
+      if List.exists (_eq addr) !l
         then l := addr :: (List.filter (fun x -> not (_eq x addr)) !l)
         else l := addr :: !l
 
@@ -698,6 +698,8 @@ module Make(Net : Net.S)(Config : CONFIG) = struct
       Signal.send dht.messages (sender_id, msg)
     | B.L [B.S "hello"; sender_node], Some tag -> (* reply to hello *)
       let sender_node = Ring.node_of_bencode dht.ring sender_node in
+      _log ~dht "touch addr %s for node %s" (_addr_to_str sender)
+        (ID.to_string sender_node.Ring.n_id);
       Ring.touch dht.ring ~node:sender_node ~from:sender;
       _log ~dht "hello from %s" (ID.to_string sender_node.Ring.n_id);
       (* touch the node, we know it's alive *)
@@ -846,6 +848,7 @@ module Make(Net : Net.S)(Config : CONFIG) = struct
             AddressList.touch dht.local.Ring.n_addresses my_addr;
             (* update successor with fresh node *)
             let node = Ring.node_of_bencode dht.ring node in
+            AddressList.touch node.Ring.n_addresses addr;
             _consider ~dht addr;
             (* ready updates of the topology very soon *)
             Net.call_in 0.2 (fun () -> _stabilize ~dht);
