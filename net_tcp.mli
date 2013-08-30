@@ -35,10 +35,11 @@ val mk_by_name : string -> int -> Address.t option Lwt.t
   (** DNS lookup to find an IP, and make an adress out of
       it and the given port number *)
 
-val create : ?log:bool -> ?port:int -> unit -> t option
+val create : ?size:int -> ?log:bool -> ?port:int -> unit -> t option
   (** Create a new network node on the given port, if provided
       (a random port otherwise). May return None if it is impossible
-      to create a socket on the given port. *)
+      to create a socket on the given port.
+      [size] is the max number of parallel connections. *)
 
 val port : t -> int
   (** Port used by the network node *)

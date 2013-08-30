@@ -287,7 +287,7 @@ let send t addr msg =
           Lwt.return_unit
         | e -> raise e))
 
-let create ?(log=false) ?port () =
+let create ?(size=64) ?(log=false) ?port () =
   (* random port if none is specified *)
   let port = match port with
     | Some p -> p
@@ -299,7 +299,7 @@ let create ?(log=false) ?port () =
     port;
     listen_thread = None;
     client_threads = AddrHashtbl.create 5;
-    conn_cache = mk_conn_cache 16;  (* TODO option for size *)
+    conn_cache = mk_conn_cache size;
     stop = false;
     on_stop = Lwt_condition.create ();
   } in
