@@ -27,7 +27,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 module N = Net_tcp
 module Dht = Chord.Make(N)(Chord.ConfigDefault)
-module B = Broadcast.Make(Dht)
+module B = DhtBroadcast.Make(Dht)
 
 let (>>=) = Lwt.(>>=)
 
