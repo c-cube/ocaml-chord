@@ -55,6 +55,9 @@ module type S = sig
 
   val events : t -> event Signal.t
     (** messages broadcasted by others *)
+
+  val recv : t -> event Lwt.t
+    (** next event *)
 end
 
 module Make(N : Net.S) : S with module N = N

@@ -54,6 +54,9 @@ module type S = sig
 
   val events : t -> event Signal.t
     (** messages broadcasted by others *)
+
+  val recv : t -> event Lwt.t
+    (** next event *)
 end
 
 module MsgHashtbl = Hashtbl.Make(struct
@@ -102,7 +105,7 @@ module Make(N : Net.S) = struct
     ()
 
   let _broadcast ?but t msg =
-    let id = Random.int (1 lsl 31) in
+    let id = Random.int (1 lsl 29) in
     let msg' = B.L [ B.I id; msg ] in
     List.iter
       (fun addr ->
@@ -159,4 +162,11 @@ module Make(N : Net.S) = struct
   let neighbors t = t.neighbors
 
   let events t = t.events
+
+  let recv t =
+    let fut, wake = Lwt.wait () in
+    Signal.on
+      t.events
+      (fun e -> Lwt.wakeup wake e; false);
+    fut
 end

@@ -26,8 +26,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 (** {6 Simple messaging program} *)
 
 module N = Net_tcp
-module Dht = Chord.Make(N)(Chord.ConfigDefault)
-module B = DhtBroadcast.Make(Dht)
+module B = Broadcast.Make(N)
 
 let (>>=) = Lwt.(>>=)
 
@@ -42,30 +41,30 @@ let options =
   ]
 
 (* read input from the user *)
-let rec read_input dht =
+let rec read_input brdcst =
   Lwt_io.read_line_opt Lwt_io.stdin >>= function
   | None
   | Some ("\r\n" | "" | "\n") -> Lwt.return_unit
   | Some line ->
     Lwt_io.printl ("send: \'" ^ line ^ "\'") >>= fun () ->
     let msg = Bencode.S line in
-    B.broadcast dht msg;
-    read_input dht
+    B.broadcast brdcst msg;
+    read_input brdcst
 
 (* print broadcasted messages to stdout *)
-let rec print_messages dht =
-  B.recv dht >>= fun (id, msg) ->
+let rec print_messages brdcst =
+  B.recv brdcst >>= fun msg ->
   begin match msg with
-  | Bencode.S line ->
-    let output = Printf.sprintf "<%s> %s" (Dht.ID.to_string id) line in
+  | B.Receive (Bencode.S line) ->
+    let output = line in
     Lwt_io.printl output
   | _ -> Lwt.return_unit
   end
   >>= fun () ->
-  print_messages dht
+  print_messages brdcst
 
 (* connect to the given address *)
-let connect_to dht (host,port) =
+let connect_to brdcst (host,port) =
   Lwt_io.printl ("try to resolve " ^ host ^ " ... ") >>= fun () ->
   (* connect to the given address(es) *)
   N.mk_by_name host port >>= fun addr ->
@@ -74,10 +73,10 @@ let connect_to dht (host,port) =
   | Some addr ->
     let output = Format.sprintf "connect to addr %s" (N.to_string addr) in
     Lwt_io.printl output >>= fun () ->
-    Dht.connect dht addr >>= fun ret -> match ret with
-    | None -> Lwt_io.printl "unable to contact node"
-    | Some n ->
-      Lwt_io.printl ("connected to node " ^ Dht.ID.to_string (Dht.id n))
+    B.connect brdcst addr >>= fun ret ->
+    if ret
+      then Lwt_io.printl "connected" 
+      else Lwt_io.printl "unable to connect"
 
 (* start everything *)
 let start_client ?port addresses =
@@ -88,10 +87,9 @@ let start_client ?port addresses =
   | Some net ->
     let output = Format.sprintf "listen on port %d" (N.port net) in
     Lwt_io.printl output >>= fun () ->
-    let dht = Dht.create ~log net in
-    B.enable_log dht;
-    List.iter (fun a -> Lwt.ignore_result (connect_to dht a)) addresses;
-    let tasks = [read_input dht; print_messages dht] in
+    let brdcst = B.create net in
+    List.iter (fun a -> Lwt.ignore_result (connect_to brdcst a)) addresses;
+    let tasks = [read_input brdcst; print_messages brdcst] in
     Lwt.pick tasks
 
 let parse_addr addr =
