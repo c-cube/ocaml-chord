@@ -2,11 +2,11 @@
 INTERFACE_FILES = $(shell find -name '*.mli')
 IMPLEMENTATION_FILES = $(shell find -name '*.ml')
 
-TARGETS_LIB = libchord.cma libchord.cmxa
-TARGETS_DOC = libchord.docdir/index.html
-TARGETS_BIN = chat.native
+TARGETS_LIB = src/libchord.cma src/libchord.cmxa
+TARGETS_DOC = src/libchord.docdir/index.html
+TARGETS_BIN = src/chat.native
 
-OPTIONS = -use-ocamlfind -tag debug
+OPTIONS = -use-ocamlfind -tag debug -I src
 
 all: lib bin doc
 
