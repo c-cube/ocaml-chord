@@ -1,0 +1,12 @@
+# OASIS_START
+# DO NOT EDIT (digest: ce69055aeb32e49fc02c6c18538163e4)
+version = "0.1-alpha"
+description = "Toy-ish Distributed Hash Table implementation in OCaml"
+requires = "bencode bencode_rpc lwt"
+archive(byte) = "chord.cma"
+archive(byte, plugin) = "chord.cma"
+archive(native) = "chord.cmxa"
+archive(native, plugin) = "chord.cmxs"
+exists_if = "chord.cma"
+# OASIS_STOP
+

@@ -1,17 +1,16 @@
 # Chord
 
-A modular DHT implementation based on
-[chord](http://en.wikipedia.org/wiki/Chord_%28peer-to-peer%29). It is
-not bound to a particular transport, only assuming that `B-encode` values
-can be sent, and that the receiver knows where messages come from.
-Theoretically, one could even build a DHT on top of e-mails ;).
+A simple DHT implementation based on
+[chord](http://en.wikipedia.org/wiki/Chord_%28peer-to-peer%29). It
+uses `bencode_rpc` to communicate between nodes.
 
 ## Build
 
-You will need OCaml >= 3.12 (at least, I test on 4.00.1). The library
-`lwt` also needs to be installed, either by hand or with opam:
+You will need OCaml >= 3.12 (at least, I test on 4.00.1). The libraries
+`bencode`, `bencode_rpc` and `lwt` also need to be installed, either by hand
+or with opam:
 
-    $ opam install lwt
+    $ opam install lwt bencode bencode_rpc
 
 Then, type
 

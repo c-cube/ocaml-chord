@@ -4,4 +4,6 @@ B _build
 B _build/tests/
 PKG lwt
 PKG lwt.unix
+PKG bencode
+PKG bencode_rpc
 PKG oUnit

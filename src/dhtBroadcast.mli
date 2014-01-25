@@ -34,7 +34,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
    resists a few node failures? *)
 
 module type S = sig
-  module Dht : Chord.S
+  module Dht : Dht.S
 
   val start_broadcast : ?log:bool -> Dht.t -> unit
     (** Enable broadcasting on this DHT instance *)
@@ -56,4 +56,4 @@ module type S = sig
     (** Wait for the next broadcasted message *)
 end
 
-module Make(Dht : Chord.S) : S with module Dht = Dht
+module Make(Dht : Dht.S) : S with module Dht = Dht

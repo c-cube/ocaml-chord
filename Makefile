@@ -1,32 +1,38 @@
+# OASIS_START
+# DO NOT EDIT (digest: 7b2408909643717852b95f994b273fee)
 
-INTERFACE_FILES = $(shell find -name '*.mli')
-IMPLEMENTATION_FILES = $(shell find -name '*.ml')
+SETUP = ocaml setup.ml
 
-TARGETS_LIB = src/libchord.cma src/libchord.cmxa
-TARGETS_DOC = src/libchord.docdir/index.html
-TARGETS_BIN = src/chat.native
+build: setup.data
+	$(SETUP) -build $(BUILDFLAGS)
 
-OPTIONS = -use-ocamlfind -tag debug -I src
+doc: setup.data build
+	$(SETUP) -doc $(DOCFLAGS)
 
-all: lib bin doc
+test: setup.data build
+	$(SETUP) -test $(TESTFLAGS)
 
-lib:
-	ocamlbuild $(OPTIONS) $(TARGETS_LIB)
+all:
+	$(SETUP) -all $(ALLFLAGS)
 
-doc:
-	ocamlbuild $(OPTIONS) $(TARGETS_DOC)
+install: setup.data
+	$(SETUP) -install $(INSTALLFLAGS)
 
-bin: lib
-	ocamlbuild $(OPTIONS) $(TARGETS_BIN)
+uninstall: setup.data
+	$(SETUP) -uninstall $(UNINSTALLFLAGS)
 
-tests: lib
-	ocamlbuild $(OPTIONS) -package oUnit -I . tests/run_tests.native
+reinstall: setup.data
+	$(SETUP) -reinstall $(REINSTALLFLAGS)
 
 clean:
-	ocamlbuild -clean
+	$(SETUP) -clean $(CLEANFLAGS)
 
-tags:
-	otags *.ml *.mli
+distclean:
+	$(SETUP) -distclean $(DISTCLEANFLAGS)
 
-.PHONY: all clean tests tags
+setup.data:
+	$(SETUP) -configure $(CONFIGUREFLAGS)
 
+.PHONY: build doc test all install uninstall reinstall clean distclean configure
+
+# OASIS_STOP

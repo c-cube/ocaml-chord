@@ -28,7 +28,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 module B = Bencode
 
 module type S = sig
-  module Dht : Chord.S
+  module Dht : Dht.S
 
   val start_broadcast : ?log:bool -> Dht.t -> unit
     (** Enable broadcasting on this DHT instance *)
@@ -49,7 +49,7 @@ module type S = sig
     (** Wait for the next broadcasted message *)
 end
 
-module Make(Dht : Chord.S) = struct
+module Make(Dht : Dht.S) = struct
   module Dht = Dht
   module Rpc = Dht.AsRPC
 

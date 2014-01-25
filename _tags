@@ -1,3 +1,24 @@
-<tests>: include, package(oUnit)
-<**/*.ml> or <**/*.mli>: package(lwt), package(lwt.unix)
-<**/*.native> or <**/*.byte> or <**/*.cm*>: package(lwt), package(lwt.unix), package(num)
+# OASIS_START
+# DO NOT EDIT (digest: 4fa8afca3dc97216935c9656ec7460a8)
+# Ignore VCS directories, you can use the same kind of rule outside
+# OASIS_START/STOP if you want to exclude directories that contains
+# useless stuff for the build process
+<**/.svn>: -traverse
+<**/.svn>: not_hygienic
+".bzr": -traverse
+".bzr": not_hygienic
+".hg": -traverse
+".hg": not_hygienic
+".git": -traverse
+".git": not_hygienic
+"_darcs": -traverse
+"_darcs": not_hygienic
+# Library chord
+"src/chord.cmxs": use_chord
+"src/dht.cmx": for-pack(Chord)
+"src/dhtBroadcast.cmx": for-pack(Chord)
+"src/broadcast.cmx": for-pack(Chord)
+<src/*.ml{,i}>: package(bencode)
+<src/*.ml{,i}>: package(bencode_rpc)
+<src/*.ml{,i}>: package(lwt)
+# OASIS_STOP
